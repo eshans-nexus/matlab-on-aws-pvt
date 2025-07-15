@@ -1,0 +1,101 @@
+name: 'Build MATLAB AMI with Packer'
+
+on:
+  workflow_dispatch:
+    inputs:
+      matlab_version:
+        description: 'MATLAB Version (e.g., R2025a)'
+        required: true
+        type: string
+        default: 'R2025a'
+
+jobs:
+  build-ami:
+    name: 'Build AMI'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHub-Packer-Build-${{ github.run_id }}
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: '1.10.2'
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Validate Packer Template
+        id: validate
+        working-directory: ./packer/v1
+        run: |
+          packer validate \
+            -var-file="release-config/${{ inputs.matlab_version }}.pkrvars.hcl" \
+            -var="PRODUCTS=MATLAB" \
+            .
+
+      # UPDATED: We now pipe the output to 'tee' to both display it live and save it to a file.
+      - name: Run Packer Build
+        id: build
+        working-directory: ./packer/v1
+        run: |
+          packer build -color=false \
+            -var-file="release-config/${{ inputs.matlab_version }}.pkrvars.hcl" \
+            -var="PRODUCTS=MATLAB" \
+            . | tee packer-build.log
+
+      # NEW: This step uploads the build log file as a workflow artifact.
+      # It runs even if the build step fails, so you can always download logs for debugging.
+      - name: Upload Packer Log
+        if: always() # Always run this step
+        uses: actions/upload-artifact@v4
+        with:
+          name: packer-build-log
+          path: ./packer/v1/packer-build.log
+
+      # NEW: This step creates a dynamic job summary with key information.
+      # It adapts its output based on whether the build succeeded or failed.
+      - name: Create Build Summary
+        if: always() # Always run this step
+        id: summary
+        run: |
+          echo "## 🏗️ MATLAB AMI Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ job.status }}" == "success" ]]; then
+            # Extract the created AMI ID from the manifest.json file
+            BUILT_AMI_ID=$(jq -r '.builds[-1].artifact_id' ./packer/v1/manifest.json | cut -d':' -f2)
+            # Extract the source AMI ID from the log file
+            SOURCE_AMI_ID=$(grep 'Found matching AMI' ./packer/v1/packer-build.log | tail -n1 | awk -F': ' '{print $2}')
+            
+            echo "✅ **Build Succeeded!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Build Information" >> $GITHUB_STEP_SUMMARY
+            echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+            echo "| **MATLAB Version** | \`${{ github.event.inputs.matlab_version }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Base OS** | Ubuntu 22.04 |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Source AMI ID** | \`$SOURCE_AMI_ID\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Build Date** | $(date -u +"%Y-%m-%d %H:%M:%S UTC") |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 New AMI Details" >> $GITHUB_STEP_SUMMARY
+            echo "| Region | New AMI ID | Launch Link |" >> $GITHUB_STEP_SUMMARY
+            echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+            echo "| **${{ secrets.AWS_REGION }}** | \`$BUILT_AMI_ID\` | [View in AWS Console](https://${{ secrets.AWS_REGION }}.console.aws.amazon.com/ec2/v2/home?region=${{ secrets.AWS_REGION }}#Images:visibility=owned-by-me;imageId=$BUILT_AMI_ID) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Build Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The Packer build process failed. Please check the logs for details." >> $GITHUB_STEP_SUMMARY
+            echo "You can download the full log file from the 'Artifacts' section of this workflow run." >> $GITHUB_STEP_SUMMARY
+          fi
