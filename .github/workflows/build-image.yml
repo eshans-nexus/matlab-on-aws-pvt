@@ -28,14 +28,18 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           role-session-name: GitHub-Packer-Build-${{ github.run_id }}
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Setup Packer
         uses: hashicorp/setup-packer@main
         with:
           version: '1.10.2'
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
+      - name: Initialize Packer plugins
+        working-directory: ./packer/v1
+        run: packer init .
+      
       - name: Validate Packer Template
         id: validate
         working-directory: ./packer/v1
