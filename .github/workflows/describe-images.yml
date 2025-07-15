@@ -1,6 +1,14 @@
 name: 'Callable: Describe EC2 Images'
 
 on:
+  workflow_dispatch:
+    inputs:
+      aws-region:
+        description: 'The AWS region to run commands in.'
+        required: true
+        type: string
+        default: 'us-east-1'
+        
   workflow_call:
     inputs:
       aws-region:
