@@ -32,10 +32,11 @@ jobs:
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------
-      # REAL BUILD STEPS (Skipped if test_mode is true)
+      # REAL BUILD STEPS (Skipped if test_mode is checked)
       # ---------------------------------------------------------
       - name: Configure AWS Credentials
-        if: ${{ inputs.test_mode != 'true' }}
+        # UPDATED: Removed quotes around 'true' to handle boolean input correctly
+        if: ${{ inputs.test_mode != true }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
@@ -43,13 +44,13 @@ jobs:
           role-session-name: GitHub-Packer-Build
 
       - name: Setup Packer
-        if: ${{ inputs.test_mode != 'true' }}
+        if: ${{ inputs.test_mode != true }}
         uses: hashicorp/setup-packer@main
         with:
           version: '1.10.2'
 
       - name: Run Packer Build (Real)
-        if: ${{ inputs.test_mode != 'true' }}
+        if: ${{ inputs.test_mode != true }}
         id: build
         working-directory: ./packer/v1
         run: |
@@ -60,21 +61,24 @@ jobs:
             . | tee packer-build.log
 
       # ---------------------------------------------------------
-      # MOCK BUILD STEPS (Run ONLY if test_mode is true)
+      # MOCK BUILD STEPS (Run ONLY if test_mode is checked)
       # ---------------------------------------------------------
       - name: 🧪 Mock Packer Build (Test Mode)
-        if: ${{ inputs.test_mode == 'true' }}
+        # UPDATED: Removed quotes around 'true'
+        if: ${{ inputs.test_mode == true }}
         working-directory: ./packer/v1
         run: |
           echo "⚠️ TEST MODE ACTIVE: Skipping Packer Build."
           echo "Simulating successful build for us-east-1 AMI..."
           
+          # Ensure directory exists if checkout didn't create it (e.g. sparse checkout)
+          mkdir -p .
+          
           # 1. Create a dummy log file
           echo "Found matching AMI: ami-06554a9c16731eeb8" > packer-build.log
           echo "Build 'amazon-ebs' finished after 1 second." >> packer-build.log
           
-          # 2. Create a dummy manifest.json so the parsing logic works
-          # We use the AMI ID from your template's us-east-1 map
+          # 2. Create a dummy manifest.json
           cat <<EOF > manifest.json
           {
             "builds": [
@@ -97,10 +101,8 @@ jobs:
       - name: Process Outputs & Summary
         id: export_ami
         run: |
-          # Install jq if missing (Ubuntu usually has it, but good safety)
           sudo apt-get install -y jq
 
-          # Logic works for both Real and Mock because Mock created the files above
           BUILT_AMI_ID=$(jq -r '.builds[-1].artifact_id' ./packer/v1/manifest.json | cut -d':' -f2)
           
           echo "ami_id=$BUILT_AMI_ID" >> "$GITHUB_OUTPUT"
@@ -118,7 +120,7 @@ jobs:
             ./packer/v1/manifest.json
 
   # ----------------------------------------------------------------
-  # JOB 2: SCAN IMAGE (This will now scan the existing AMI)
+  # JOB 2: SCAN IMAGE (Scans the existing AMI)
   # ----------------------------------------------------------------
   scan-image:
     name: 'Scan AMI for CVEs'
@@ -129,8 +131,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
-          # IMPORTANT: Ensure this region matches the Mock AMI's region (us-east-1)
-          # If your secrets.AWS_REGION is different, the scan will fail to find the AMI.
+          # HARDCODED for testing with the us-east-1 AMI provided
           aws-region: us-east-1 
           role-session-name: GitHub-Trivy-Scan
 
@@ -174,9 +175,9 @@ jobs:
           AMI_ID="${{ needs.build-ami.outputs.ami_id }}"
           TEMPLATE_PATH="./releases/$MATLAB_VER/matlab.template.json"
           
-          # Create a dummy template if it doesn't exist in the repo for testing
+          # Create dummy template if missing
           if [ ! -f "$TEMPLATE_PATH" ]; then
-             echo "⚠️ Template not found (testing mode?), creating dummy..."
+             echo "Creating dummy template for testing..."
              mkdir -p "./releases/$MATLAB_VER"
              echo '{"Parameters":{"CustomAmiId":{"Default":""}}}' > "$TEMPLATE_PATH"
           fi
