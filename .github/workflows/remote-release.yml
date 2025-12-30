@@ -1,0 +1,27 @@
+name: Build, scan, stage and release using re-usable workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      matlab_version:
+        required: true
+        default: 'R2025a'
+      test_mode:
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write          # Required for AWS OIDC (Packer, Distribute)
+  contents: write          # Required for Creating Releases (gh-release)
+  attestations: write      # Required for SLSA Attestations
+  security-events: write   # Required for uploading Trivy SARIF results
+  actions: read            # Sometimes required if the repo is private/internal
+
+jobs:
+  call-orchestrator:
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws.yml@main
+    with:
+      matlab_version: ${{ inputs.matlab_version }}
+      test_mode: ${{ inputs.test_mode }}
+      packer_dir: './packer/v1'
+    secrets: inherit
