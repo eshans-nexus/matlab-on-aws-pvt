@@ -17,6 +17,7 @@ permissions:
   contents: write
   attestations: write
   security-events: write
+  actions: read
 
 jobs:
   build:
