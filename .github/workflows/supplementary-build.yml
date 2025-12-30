@@ -20,6 +20,7 @@ permissions:
 
 jobs:
   build:
+    name: Run packer build
     uses: eshans-nexus/actions-templates/.github/workflows/packer-build-aws.yml@main
     with:
       matlab_version: ${{ inputs.matlab_version }}
@@ -28,6 +29,7 @@ jobs:
 
   scan:
     needs: build
+    name: Run trivy security scan
     uses: eshans-nexus/actions-templates/.github/workflows/trivy-scan-aws.yml@main
     with:
       ami_id: ${{ needs.build.outputs.ami_id }}
@@ -36,6 +38,7 @@ jobs:
 
   patch:
     needs: build
+    name: Patch template to use built AMI
     uses: eshans-nexus/actions-templates/.github/workflows/patch-template.yml@main
     with:
       template_path: "./releases/${{ inputs.matlab_version }}/aws-matlab-template.json"
@@ -43,6 +46,7 @@ jobs:
 
   attest:
     needs: [build, patch]
+    name: Attest builds to ensure authenticity
     uses: eshans-nexus/actions-templates/.github/workflows/slsa-attest.yml@main
     with:
       template_artifact: 'patched-template'
@@ -51,6 +55,7 @@ jobs:
   release:
     needs: [attest, patch, scan, build]
     if: inputs.test_mode == false
+    name: Create GitHub release
     uses: eshans-nexus/actions-templates/.github/workflows/gh-release.yml@main
     with:
       version: ${{ inputs.matlab_version }}
