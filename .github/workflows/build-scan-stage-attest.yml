@@ -1,0 +1,207 @@
+name: 'Build MATLAB AMI with Packer'
+
+on:
+  workflow_dispatch:
+    inputs:
+      matlab_version:
+        description: 'MATLAB Version (e.g., R2025a)'
+        required: true
+        type: string
+        default: 'R2025a'
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+  security-events: write # Required for uploading scan results
+
+jobs:
+  build-ami:
+    name: 'Build AMI'
+    runs-on: ubuntu-latest
+    # Map step outputs to job outputs for use in other jobs
+    outputs:
+      ami_id: ${{ steps.summary.outputs.ami_id }}
+      matlab_version: ${{ inputs.matlab_version }}
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHub-Packer-Build-${{ github.run_id }}
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Setup Packer
+        uses: hashicorp/setup-packer@main
+        with:
+          version: '1.10.2'
+
+      - name: Initialize Packer plugins
+        working-directory: ./packer/v1
+        run: packer init .
+      
+      - name: Validate Packer Template
+        working-directory: ./packer/v1
+        run: |
+          packer validate \
+            -var-file="release-config/${{ inputs.matlab_version }}.pkrvars.hcl" \
+            -var="PRODUCTS=MATLAB" \
+            .
+
+      - name: Run Packer Build
+        id: build
+        working-directory: ./packer/v1
+        run: |
+          packer build -color=false \
+            -var-file="release-config/${{ inputs.matlab_version }}.pkrvars.hcl" \
+            -var="PRODUCTS=MATLAB" \
+            . | tee packer-build.log
+
+      - name: Upload Packer Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packer-logs-and-manifest
+          path: |
+            ./packer/v1/packer-build.log
+            ./packer/v1/manifest.json
+
+      - name: Process Outputs & Summary
+        if: success()
+        id: summary
+        run: |
+          # Extract AMI ID
+          BUILT_AMI_ID=$(jq -r '.builds[-1].artifact_id' ./packer/v1/manifest.json | cut -d':' -f2)
+          SOURCE_AMI_ID=$(grep 'Found matching AMI' ./packer/v1/packer-build.log | tail -n1 | awk -F': ' '{print $2}')
+          
+          # Set Output for other jobs
+          echo "ami_id=$BUILT_AMI_ID" >> "$GITHUB_OUTPUT"
+
+          # Create Summary
+          echo "## 🏗️ MATLAB AMI Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Build Succeeded!**" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **MATLAB Version** | \`${{ inputs.matlab_version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **New AMI ID** | \`$BUILT_AMI_ID\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ----------------------------------------------------------------
+  # JOB 2: SCAN IMAGE (Security)
+  # ----------------------------------------------------------------
+  scan-image:
+    name: 'Scan AMI for CVEs'
+    needs: build-ami
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHub-Trivy-Scan
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@v0.2
+        with:
+          cache: true
+
+      - name: Run Trivy Vulnerability Scanner
+        # Trivy can scan AMIs by snapshotting them. 
+        # Note: This requires the AWS role to have permission to CreateSnapshot/DeleteSnapshot.
+        run: |
+          echo "Scanning AMI: ${{ needs.build-ami.outputs.ami_id }}"
+          
+          trivy vm \
+            --scanners vuln \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity HIGH,CRITICAL \
+            ami:${{ needs.build-ami.outputs.ami_id }}
+
+      - name: Upload Trivy Scan Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-ami-scan
+
+  # ----------------------------------------------------------------
+  # JOB 3: STAGE TEMPLATE (Templating)
+  # ----------------------------------------------------------------
+  stage-template:
+    name: 'Stage CloudFormation Template'
+    needs: build-ami
+    runs-on: ubuntu-latest
+    outputs:
+      # We output the name of the artifact so the next job knows what to attest
+      artifact_name: matlab-cfn-template
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Inject AMI ID into Template
+        id: inject
+        run: |
+          MATLAB_VER="${{ inputs.matlab_version }}"
+          AMI_ID="${{ needs.build-ami.outputs.ami_id }}"
+          TEMPLATE_PATH="./releases/$MATLAB_VER/matlab.template.json" # Adjust filename if needed
+          
+          echo "Processing template at $TEMPLATE_PATH with AMI $AMI_ID"
+
+          # jq magic: Update the CustomAmiId Default value
+          jq --arg ami "$AMI_ID" \
+             '.Parameters.CustomAmiId.Default = $ami' \
+             "$TEMPLATE_PATH" > "matlab-${MATLAB_VER}-release.json"
+             
+          echo "Template successfully staged."
+
+      - name: Upload Staged Template
+        uses: actions/upload-artifact@v4
+        with:
+          name: matlab-cfn-template
+          path: "matlab-${{ inputs.matlab_version }}-release.json"
+
+  # ----------------------------------------------------------------
+  # JOB 4: ATTEST PROVENANCE (SLSA)
+  # ----------------------------------------------------------------
+  attest-artifacts:
+    name: 'Generate SLSA Attestation'
+    needs: [build-ami, stage-template]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      # Download the Template we just created
+      - name: Download Staged Template
+        uses: actions/download-artifact@v4
+        with:
+          name: matlab-cfn-template
+          path: ./artifacts/template
+
+      # Download the Packer Manifest (to attest the raw build data too)
+      - name: Download Packer Manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: packer-logs-and-manifest
+          path: ./artifacts/packer
+
+      # Attest the CloudFormation Template (This is what users consume)
+      - name: Attest CloudFormation Template
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ./artifacts/template/*.json
+      
+      # Attest the Packer Manifest (This links the AMI ID to the build run)
+      - name: Attest Packer Manifest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ./artifacts/packer/manifest.json
