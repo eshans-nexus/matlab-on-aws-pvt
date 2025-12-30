@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   call-orchestrator:
+    name: MATLAB AWS Linux
     uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws.yml@main
     with:
       matlab_version: ${{ inputs.matlab_version }}
