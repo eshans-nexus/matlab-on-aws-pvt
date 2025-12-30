@@ -120,19 +120,22 @@ jobs:
             ./packer/v1/manifest.json
 
   # ----------------------------------------------------------------
-  # JOB 2: SCAN IMAGE (Scans the existing AMI)
+  # JOB 2: SCAN IMAGE
   # ----------------------------------------------------------------
   scan-image:
     name: 'Scan AMI for CVEs'
     needs: build-ami
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      security-events: write
+      contents: read
     steps:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
-          # HARDCODED for testing with the us-east-1 AMI provided
-          aws-region: us-east-1 
+          aws-region: us-east-1 # Region must match where the public AMI exists
           role-session-name: GitHub-Trivy-Scan
 
       - name: Install Trivy
@@ -140,23 +143,77 @@ jobs:
         with:
           cache: true
 
-      - name: Run Trivy Vulnerability Scanner
+      - name: Create Private Copy of AMI
+        id: copy-ami
+        env:
+          SOURCE_AMI: ${{ needs.build-ami.outputs.ami_id }}
         run: |
-          echo "Scanning AMI: ${{ needs.build-ami.outputs.ami_id }}"
+          echo "Public AMI detected ($SOURCE_AMI). Creating a private copy for scanning..."
           
-          trivy vm \
-            --scanners vuln \
-            --format sarif \
-            --output trivy-results.sarif \
-            --severity HIGH,CRITICAL \
-            ami:${{ needs.build-ami.outputs.ami_id }}
+          # 1. Copy the AMI to the same region (makes it private by default)
+          COPY_JSON=$(aws ec2 copy-image \
+            --source-image-id "$SOURCE_AMI" \
+            --source-region "us-east-1" \
+            --name "trivy-scan-temp-${{ github.run_id }}" \
+            --description "Temporary AMI for Trivy scanning (Run ${{ github.run_id }})" \
+            --output json)
+          
+          NEW_AMI_ID=$(echo $COPY_JSON | jq -r '.ImageId')
+          
+          echo "Created Temporary AMI: $NEW_AMI_ID"
+          echo "ami_id=$NEW_AMI_ID" >> "$GITHUB_OUTPUT"
+
+          # 2. Wait for the AMI to be available (Copy is async)
+          echo "Waiting for AMI to be available..."
+          aws ec2 wait image-available --image-ids "$NEW_AMI_ID"
+          echo "AMI is ready."
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: nick-fields/retry@v3 # Optional: logic helps if EBS API is flaky, but standard run works too
+        with:
+          timeout_minutes: 15
+          max_attempts: 1
+          command: |
+            trivy vm \
+              --scanners vuln \
+              --format sarif \
+              --output trivy-results.sarif \
+              --severity HIGH,CRITICAL \
+              ami:${{ steps.copy-ami.outputs.ami_id }}
 
       - name: Upload Trivy Scan Results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() # Upload even if vulnerabilities are found
         with:
           sarif_file: trivy-results.sarif
           category: trivy-ami-scan
+
+      - name: Cleanup Temporary AMI
+        if: always() # Run even if scanning fails
+        run: |
+          TEMP_AMI="${{ steps.copy-ami.outputs.ami_id }}"
+          
+          if [[ -z "$TEMP_AMI" ]]; then
+            echo "No AMI ID found to clean up."
+            exit 0
+          fi
+          
+          echo "Cleaning up AMI: $TEMP_AMI"
+          
+          # 1. Get the Snapshot ID (Deregistering AMI does NOT delete the snapshot)
+          SNAPSHOT_ID=$(aws ec2 describe-images --image-ids "$TEMP_AMI" --query 'Images[0].BlockDeviceMappings[0].Ebs.SnapshotId' --output text)
+          
+          # 2. Deregister AMI
+          aws ec2 deregister-image --image-id "$TEMP_AMI"
+          echo "AMI Deregistered."
+          
+          # 3. Delete Snapshot
+          if [[ "$SNAPSHOT_ID" != "None" && -n "$SNAPSHOT_ID" ]]; then
+            aws ec2 delete-snapshot --snapshot-id "$SNAPSHOT_ID"
+            echo "Snapshot $SNAPSHOT_ID deleted."
+          else
+            echo "No snapshot attached or found."
+          fi
 
   # ----------------------------------------------------------------
   # JOB 3: STAGE TEMPLATE
