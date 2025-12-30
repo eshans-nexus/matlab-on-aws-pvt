@@ -19,7 +19,6 @@ permissions:
   security-events: write
 
 jobs:
-  # 1. Build
   build:
     uses: eshans-nexus/actions-templates/.github/workflows/packer-build-aws.yml@main
     with:
@@ -27,7 +26,6 @@ jobs:
       test_mode: ${{ inputs.test_mode }}
     secrets: inherit
 
-  # 2. Scan
   scan:
     needs: build
     if: inputs.test_mode == false
@@ -37,7 +35,6 @@ jobs:
       region: ${{ needs.build.outputs.region }}
     secrets: inherit
 
-  # 3. Patch Template
   patch:
     needs: build
     uses: eshans-nexus/actions-templates/.github/workflows/patch-template-single.yml@main
@@ -45,7 +42,6 @@ jobs:
       template_path: "./releases/${{ inputs.matlab_version }}/matlab.template.json"
       ami_id: ${{ needs.build.outputs.ami_id }}
 
-  # 4. Attest (Now attests template + packer artifacts)
   attest:
     needs: [build, patch]
     uses: eshans-nexus/actions-templates/.github/workflows/slsa-attest.yml@main
@@ -53,7 +49,6 @@ jobs:
       template_artifact: 'patched-template'
       packer_artifact: 'packer-artifacts'
 
-  # 5. Release (Uploads Template, Log, Manifest, Sarif)
   release:
     needs: [attest, patch, scan, build]
     if: inputs.test_mode == false
