@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       matlab_version:
+        description: MATLAB Version
         required: true
         default: 'R2025a'
       test_mode:
+        description: Test Mpde (to mock builds)
         type: boolean
         default: false
 
@@ -24,4 +26,5 @@ jobs:
       matlab_version: ${{ inputs.matlab_version }}
       test_mode: ${{ inputs.test_mode }}
       packer_dir: './packer/v1'
+      template_file_name: 'aws-matlab-template.json'
     secrets: inherit
