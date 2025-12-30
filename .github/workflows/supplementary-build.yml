@@ -10,7 +10,7 @@ on:
       test_mode:
         description: 'Test Mode (Mock Build)'
         type: boolean
-        default: false
+        default: true
 
 permissions:
   id-token: write
@@ -28,7 +28,6 @@ jobs:
 
   scan:
     needs: build
-    if: inputs.test_mode == false
     uses: eshans-nexus/actions-templates/.github/workflows/trivy-scan-aws.yml@main
     with:
       ami_id: ${{ needs.build.outputs.ami_id }}
