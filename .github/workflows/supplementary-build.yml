@@ -38,7 +38,7 @@ jobs:
     needs: build
     uses: eshans-nexus/actions-templates/.github/workflows/patch-template.yml@main
     with:
-      template_path: "./releases/${{ inputs.matlab_version }}/matlab.template.json"
+      template_path: "./releases/${{ inputs.matlab_version }}/aws-matlab-template.json"
       ami_id: ${{ needs.build.outputs.ami_id }}
 
   attest:
