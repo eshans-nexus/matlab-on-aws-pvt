@@ -1,0 +1,66 @@
+name: 'Supplementary Build Orchestrator'
+
+on:
+  workflow_dispatch:
+    inputs:
+      matlab_version:
+        description: 'MATLAB Version (e.g. R2025a)'
+        required: true
+        default: 'R2025a'
+      test_mode:
+        description: 'Test Mode (Mock Build)'
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+  security-events: write
+
+jobs:
+  # 1. Build
+  build:
+    uses: eshans-nexus/actions-templates/.github/workflows/packer-build-aws.yml@main
+    with:
+      matlab_version: ${{ inputs.matlab_version }}
+      test_mode: ${{ inputs.test_mode }}
+    secrets: inherit
+
+  # 2. Scan
+  scan:
+    needs: build
+    if: inputs.test_mode == false
+    uses: eshans-nexus/actions-templates/.github/workflows/trivy-scan-aws.yml@main
+    with:
+      ami_id: ${{ needs.build.outputs.ami_id }}
+      region: ${{ needs.build.outputs.region }}
+    secrets: inherit
+
+  # 3. Patch Template
+  patch:
+    needs: build
+    uses: eshans-nexus/actions-templates/.github/workflows/patch-template-single.yml@main
+    with:
+      template_path: "./releases/${{ inputs.matlab_version }}/matlab.template.json"
+      ami_id: ${{ needs.build.outputs.ami_id }}
+
+  # 4. Attest (Now attests template + packer artifacts)
+  attest:
+    needs: [build, patch]
+    uses: eshans-nexus/actions-templates/.github/workflows/slsa-attest.yml@main
+    with:
+      template_artifact: 'patched-template'
+      packer_artifact: 'packer-artifacts'
+
+  # 5. Release (Uploads Template, Log, Manifest, Sarif)
+  release:
+    needs: [attest, patch, scan, build]
+    if: inputs.test_mode == false
+    uses: eshans-nexus/actions-templates/.github/workflows/gh-release.yml@main
+    with:
+      version: ${{ inputs.matlab_version }}
+      prerelease: true
+      template_artifact: 'patched-template'
+      packer_artifact: 'packer-artifacts'
+      scan_artifact: 'trivy-results'
