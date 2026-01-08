@@ -8,7 +8,7 @@ on:
         required: true
         default: 'R2025a'
       test_mode:
-        description: Test Mpde (to mock builds)
+        description: Test Mode (to mock builds)
         type: boolean
         default: false
 
