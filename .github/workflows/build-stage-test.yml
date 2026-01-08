@@ -25,6 +25,7 @@ jobs:
     uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws.yml@main
     with:
       matlab_version: ${{ inputs.matlab_version }}
+      flavor: 'matlab-linux'
       test_mode: ${{ inputs.test_mode }}
       packer_dir: './packer/v1'
       template_file_name: 'aws-matlab-template.json'
