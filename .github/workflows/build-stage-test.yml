@@ -21,7 +21,7 @@ permissions:
 jobs:
   call-orchestrator:
     name: MATLAB Linux
-    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-multi-aws.yml@main
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws-multi.yml@main
     with:
       matlab_versions: ${{ inputs.matlab_version }}
       flavor: 'matlab-linux'
