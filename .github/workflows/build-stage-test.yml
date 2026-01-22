@@ -6,7 +6,7 @@ on:
       matlab_version:
         description: MATLAB Version
         default: ''
-      test_mode:
+      skip_build:
         description: Test Mode (to mock builds)
         type: boolean
         default: false
@@ -26,5 +26,5 @@ jobs:
       matlab_versions: ${{ inputs.matlab_version }}
       flavor: 'matlab-linux'
       template_file_name: 'aws-matlab-template.json'
-      test_mode: ${{ inputs.test_mode }}
+      skip_build: ${{ inputs.skip_build }}
     secrets: inherit
