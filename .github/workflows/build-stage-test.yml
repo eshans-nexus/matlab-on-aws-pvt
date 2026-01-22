@@ -22,11 +22,10 @@ permissions:
 jobs:
   call-orchestrator:
     name: MATLAB Linux
-    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws.yml@main
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-multi-aws.yml.yml@main
     with:
-      matlab_version: ${{ inputs.matlab_version }}
+      matlab_versions: ${{ inputs.matlab_version }}
       flavor: 'matlab-linux'
-      test_mode: ${{ inputs.test_mode }}
-      packer_dir: './packer/v1'
       template_file_name: 'aws-matlab-template.json'
+      test_mode: ${{ inputs.test_mode }}
     secrets: inherit
