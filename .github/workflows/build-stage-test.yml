@@ -5,7 +5,7 @@ on:
     inputs:
       matlab_version:
         description: MATLAB Version
-        default: 'R2025a'
+        default: ''
       test_mode:
         description: Test Mode (to mock builds)
         type: boolean
