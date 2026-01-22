@@ -5,7 +5,6 @@ on:
     inputs:
       matlab_version:
         description: MATLAB Version
-        required: true
         default: 'R2025a'
       test_mode:
         description: Test Mode (to mock builds)
