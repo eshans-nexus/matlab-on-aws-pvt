@@ -1,30 +1,82 @@
-name: Build, scan, stage and release using re-usable workflow
+name: 'Multi-version Build Pipeline'
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      matlab_version:
-        description: MATLAB Version
-        default: ''
-      skip_build:
-        description: Test Mode (to mock builds)
-        type: boolean
-        default: false
-
-permissions:
-  id-token: write          # Required for AWS OIDC (Packer, Distribute)
-  contents: write          # Required for Creating Releases (gh-release)
-  attestations: write      # Required for SLSA Attestations
-  security-events: write   # Required for uploading Trivy SARIF results
-  actions: read            # Sometimes required if the repo is private/internal
+      matlab_versions:
+        description: "Comma-separated list (e.g. R2025a,R2024b). Empty = Latest 5."
+        required: true
+        type: string
+        default: ""
 
 jobs:
-  call-orchestrator:
-    name: MATLAB Linux
-    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws-multi.yml@main
+  prepare-versions:
+    name: Determine MATLAB versions to build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Calculate Versions
+        id: set-matrix
+        shell: python
+        env:
+          INPUT_VERSIONS: ${{ inputs.matlab_versions }}
+        run: |
+          import os, json, re
+
+          input_str = os.environ.get('INPUT_VERSIONS', '').strip()
+          
+          if input_str:
+              # User provided specific list
+              versions = [v.strip() for v in input_str.split(',') if v.strip()]
+          else:
+              # We need to look at the directory where the template pattern points.
+              # Assuming pattern is "./releases/{0}", we look in "./releases"
+              target_dir = "./releases" 
+              
+              if not os.path.exists(target_dir):
+                  print(f"Directory {target_dir} not found.")
+                  exit(1)
+
+              pattern = re.compile(r'^R20\d{2}[ab]$')
+              found = []
+              for item in os.listdir(target_dir):
+                  if pattern.match(item) and os.path.isdir(os.path.join(target_dir, item)):
+                      found.append(item)
+              
+              # Sort descending and take top 5
+              found.sort(reverse=True)
+              versions = found[:5]
+
+          print(f"Selected versions: {versions}")
+          
+          # Write output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"matrix={json.dumps(versions)}\n")
+
+  create-artifacts:
+    needs: prepare-versions
+    strategy:
+        fail-fast: false
+        max-parallel: 5
+        matrix:
+          version: ${{ fromJson(needs.prepare-versions.outputs.matrix) }}
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws-single.yml@main
     with:
-      matlab_versions: ${{ inputs.matlab_version }}
+      matlab_version: ${{ matrix.version }}
       flavor: 'matlab-linux'
-      template_file_name: 'aws-matlab-template.json'
-      skip_build: ${{ inputs.skip_build }}
+      packer_dir: './packer/v1'
+      template_file_path: 'packer/v1/src/metatemplate.json'
+      skip_build: true # chnage this to enable builds
+    secrets: inherit
+
+  release-artifacts:
+    name: Create Aggregate GH Release
+    needs: create-artifacts
+    uses: eshans-nexus/actions-templates/.github/workflows/module-gh-release.yml@main
+    with:
+      release_tag: "Build-${{ github.run_number }}-matlab-linux"
+      prerelease: false
     secrets: inherit
