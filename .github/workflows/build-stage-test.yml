@@ -9,6 +9,13 @@ on:
         type: string
         default: ""
 
+permissions:
+  id-token: write          # Required for AWS OIDC (Packer, Distribute)
+  contents: write          # Required for Creating Releases (gh-release)
+  attestations: write      # Required for SLSA Attestations
+  security-events: write   # Required for uploading Trivy SARIF results
+  actions: read            # Sometimes required if the repo is private/internal
+
 jobs:
   prepare-versions:
     name: Determine MATLAB versions to build
