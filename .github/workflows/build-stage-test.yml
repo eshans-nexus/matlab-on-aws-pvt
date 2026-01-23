@@ -72,11 +72,11 @@ jobs:
       skip_build: true # chnage this to enable builds
     secrets: inherit
 
-  release-artifacts:
-    name: Create Aggregate GH Release
-    needs: create-artifacts
-    uses: eshans-nexus/actions-templates/.github/workflows/module-gh-release.yml@main
-    with:
-      release_tag: "Build-${{ github.run_number }}-matlab-linux"
-      prerelease: false
-    secrets: inherit
+  # release-artifacts:
+  #   name: Create Aggregate GH Release
+  #   needs: create-artifacts
+  #   uses: eshans-nexus/actions-templates/.github/workflows/module-gh-release.yml@main
+  #   with:
+  #     release_tag: "Build-${{ github.run_number }}-matlab-linux"
+  #     prerelease: false
+  #   secrets: inherit
