@@ -1,7 +1,7 @@
 name: 'Multi-version Build Pipeline'
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       matlab_versions:
         description: "Comma-separated list (e.g. R2025a,R2024b). Empty = Latest 5."
