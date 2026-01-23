@@ -17,54 +17,16 @@ permissions:
   actions: read            # Sometimes required if the repo is private/internal
 
 jobs:
+
   prepare-versions:
-    name: Determine MATLAB versions to build
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Calculate Versions
-        id: set-matrix
-        shell: python
-        env:
-          INPUT_VERSIONS: ${{ inputs.matlab_versions }}
-        run: |
-          import os, json, re
-
-          input_str = os.environ.get('INPUT_VERSIONS', '').strip()
-          
-          if input_str:
-              # User provided specific list
-              versions = [v.strip() for v in input_str.split(',') if v.strip()]
-          else:
-              # We need to look at the directory where the template pattern points.
-              # Assuming pattern is "./releases/{0}", we look in "./releases"
-              target_dir = "./releases" 
-              
-              if not os.path.exists(target_dir):
-                  print(f"Directory {target_dir} not found.")
-                  exit(1)
-
-              pattern = re.compile(r'^R20\d{2}[ab]$')
-              found = []
-              for item in os.listdir(target_dir):
-                  if pattern.match(item) and os.path.isdir(os.path.join(target_dir, item)):
-                      found.append(item)
-              
-              # Sort descending and take top 5
-              found.sort(reverse=True)
-              versions = found[:5]
-
-          print(f"Selected versions: {versions}")
-          
-          # Write output
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"matrix={json.dumps(versions)}\n")
+    uses: eshans-nexus/actions-templates/.github/workflows/module-gh-get-versions.yml@main
+    with:
+      input_versions: ${{ inputs.matlab_versions }}
+      search_dir: './releases'
 
   create-artifacts:
     needs: prepare-versions
+    if: ${{ needs.prepare-versions.outputs.matrix != '[]' }}
     strategy:
         fail-fast: false
         max-parallel: 5
