@@ -17,7 +17,6 @@ permissions:
   actions: read            # Sometimes required if the repo is private/internal
 
 jobs:
-
   prepare-versions:
     uses: eshans-nexus/actions-templates/.github/workflows/module-gh-get-versions.yml@main
     with:
@@ -38,6 +37,7 @@ jobs:
       flavor: 'matlab-linux'
       packer_dir: './packer/v1'
       template_file_path: 'packer/v1/src/metatemplate.json'
+      is_supplementary_build: true
       skip_build: true # chnage this to enable builds
     secrets: inherit
 
