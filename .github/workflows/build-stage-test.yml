@@ -50,6 +50,8 @@ jobs:
       files_pattern: "*" 
       release_tag: "Build-${{ github.run_number }}"
       release_title: "Ref Arch Build ${{ github.run_number }}"
+      s3_bucket_url: "https://s3.amazonaws.com/test-bucket"
+      dual_repo_url: "https://github.com/mathworks-ref-arch/matlab-on-aws-win"
       generate_attestations: true
       is_supplementary_build: true
     secrets: inherit
