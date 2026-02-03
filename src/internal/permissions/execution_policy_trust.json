@@ -1,0 +1,23 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "lambda.<<AWS_URL_SUFFIX>>"
+            },
+            "Action": [
+                "sts:AssumeRole"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "ec2.<<AWS_URL_SUFFIX>>"
+            },
+            "Action": [
+                "sts:AssumeRole"
+            ]
+        }
+    ]
+}

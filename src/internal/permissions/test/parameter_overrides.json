@@ -1,0 +1,6 @@
+{
+    "AutoShutdown": "After 3 hours",
+    "EnableCloudWatch": "Yes",
+    "EnableMATLABProxy": "Yes",
+    "UseElasticIpAddress": "Yes"
+}

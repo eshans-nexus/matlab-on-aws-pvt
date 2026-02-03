@@ -1,0 +1,1759 @@
+PROJECT STRUCTURE:
+src/
+    aws-matlab-template.json
+    README.md
+    reporoll.py
+    toplevel/
+        LICENSE.md
+        README.md
+        permission.md
+    static/
+        SECURITY.md
+        img/
+    internal/
+        permissions/
+            execution_policy_trust.json
+            execution_policy.json
+            provisioning_policy.json
+            test/
+                parameter_overrides.json
+
+
+==================================================
+
+FILE CONTENTS:
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/aws-matlab-template.json">
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Mappings": {
+        "RegionMap" : {}
+    },
+    "Resources": {
+        "PredefinedRole": {
+            "Type": "AWS::IAM::Role",
+            "Condition": "CreateNewRole",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": { "Service": "ec2.amazonaws.com" },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Path": "/MW/",
+                "ManagedPolicyArns": {
+                    "Fn::If": [
+                        "UseAdditionalPolicies",
+                        { "Fn::Split": [";", {"Ref": "AdditionalIamPolicies"}] },
+                        { "Ref": "AWS::NoValue" }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "Fn::If": [
+                            "UseCloudWatch",
+                            {
+                                "PolicyName": "cloudwatch-access-policy",
+                                "PolicyDocument": {
+                                    "Version": "2012-10-17",
+                                    "Statement": [
+                                        {
+                                            "Effect": "Allow",
+                                            "Action": [
+                                                "logs:CreateLogStream",
+                                                "logs:DescribeLogStreams",
+                                                "logs:PutLogEvents"
+                                            ],
+                                            "Resource": {
+                                                "Fn::Sub": [
+                                                    "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${LogGroupName}:*",
+                                                    {
+                                                        "LogGroupName": {"Ref": "MWLogLocation"}
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
+                            { "Ref": "AWS::NoValue" }
+                        ]
+                    },
+                    {
+                        "PolicyName": "dcv-access-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "s3:GetObject",
+                                    "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::dcv-license.${AWS::Region}/*" }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "ssm-access-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ssm:DescribeAssociation",
+                                        "ssm:GetDeployablePatchSnapshotForInstance",
+                                        "ssm:GetDocument",
+                                        "ssm:DescribeDocument",
+                                        "ssm:GetManifest",
+                                        "ssm:GetParameter",
+                                        "ssm:GetParameters",
+                                        "ssm:ListAssociations",
+                                        "ssm:ListInstanceAssociations",
+                                        "ssm:PutInventory",
+                                        "ssm:PutComplianceItems",
+                                        "ssm:PutConfigurePackageResult",
+                                        "ssm:UpdateAssociationStatus",
+                                        "ssm:UpdateInstanceAssociationStatus",
+                                        "ssm:UpdateInstanceInformation"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ssmmessages:CreateControlChannel",
+                                        "ssmmessages:CreateDataChannel",
+                                        "ssmmessages:OpenControlChannel",
+                                        "ssmmessages:OpenDataChannel"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ec2messages:AcknowledgeMessage",
+                                        "ec2messages:DeleteMessage",
+                                        "ec2messages:FailMessage",
+                                        "ec2messages:GetEndpoint",
+                                        "ec2messages:GetMessages",
+                                        "ec2messages:SendReply"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": "describe-tags-policy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "ec2:DescribeTags",
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "MATLABInstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/MW/",
+                "Roles": [
+                    {
+                        "Fn::If": ["CreateNewRole",
+                            {
+                                "Ref": "PredefinedRole"
+                            },
+                            {
+                                "Ref": "CustomIamRole"
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        "EC2AutoShutdown": {
+            "Type" : "AWS::CloudFormation::Stack",
+            "DeletionPolicy" : "Delete",
+            "UpdateReplacePolicy" : "Delete",
+            "Properties" : {
+                "TemplateURL" : "https://mathworks-reference-architectures-templates.s3.amazonaws.com/ec2-shutdown-lambda/v1/0/1/ec2-shutdown-lambda.yml",
+                "Parameters" : {
+                    "EC2InstanceId" : { "Ref" : "MATLABEC2Instance" },
+                    "MathWorksProductId": "MathWorks-MATLAB-Linux",
+                    "ShutdownBehaviour" : { "Ref" : "AutoShutdown" },
+                    "TagToMonitor" : "mw-autoshutdown",
+                    "AutoShutdownLambdaLogRetentionInDays" : 1,
+                    "ShutdownLambdaExecutionRoleArn": { 
+                        "Fn::If": [
+                            "CreateNewRole",
+                            "",
+                            { "Fn::Sub" : "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/MW/${CustomIamRole}" }
+                        ]
+                    }
+                }
+            }
+        },
+        "MWSecurityGroup": {
+            "Type" : "AWS::CloudFormation::Stack",
+            "DeletionPolicy" : "Delete",
+            "UpdateReplacePolicy" : "Delete",
+            "Properties" : {
+                "TemplateURL" : "https://mathworks-reference-architectures-templates.s3.amazonaws.com/security-group/v2/0/0/security-group.yml",
+                "Parameters" : {
+                    "VpcId" : { "Ref" : "VPC" },
+                    "CidrRanges" : { "Ref" : "ClientIPAddress" },
+                    "SSHAccess" : "Yes",
+                    "RDPAccess" : "Yes",
+                    "NICEDCVAccess" : "Yes",
+                    "MATLABProxyAccess": "Yes"
+                }
+            }
+        },
+        "MWLogLocation": {
+            "Type" : "AWS::Logs::LogGroup",
+            "Condition": "UseCloudWatch",
+            "DeletionPolicy" : "Delete",
+            "UpdateReplacePolicy" : "Delete"
+        },
+        "MATLABEC2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId" : { 
+                    "Fn::If": [
+                        "UseCustomAMI",
+                        {
+                          "Ref": "CustomAmiId"
+                        },
+                        {
+                            "Fn::FindInMap" : [ 
+                                "RegionMap", 
+                                {
+                                    "Ref" : "AWS::Region"
+                                }, 
+                                "AMI"
+                            ]
+                        }
+                    ]
+                },
+                "KeyName": {
+                    "Ref": "SSHKeyName"
+                },
+                "NetworkInterfaces": [
+                    {
+                        "AssociatePublicIpAddress": {
+                            "Fn::If": [
+                                "UsePublicIp",
+                                true,
+                                false
+                            ]
+                        },
+                        "DeviceIndex": "0",
+                        "SubnetId": {"Ref": "Subnet"},
+                        "GroupSet": [
+                            { "Fn::GetAtt" : [ "MWSecurityGroup", "Outputs.SecurityGroupId" ] },
+                            {
+                                "Fn::If": [
+                                    "AddSG",
+                                    { "Ref": "AdditionalSecurityGroup" },
+                                    { "Ref": "AWS::NoValue" }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+                "InstanceType": {
+                    "Ref": "InstanceType"
+                },
+                "IamInstanceProfile": {
+                    "Ref": "MATLABInstanceProfile" 
+                },
+                "EbsOptimized": "true",
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/sda1",
+                        "Ebs": {
+                            "VolumeSize": {
+                                "Ref": "RootVolumeSize"
+                            }
+                        }
+                    }
+                ],
+                "Tags":[
+                    { "Key": "Name", "Value":  {"Ref": "InstanceName"}},
+                    { "Key": "mw-ProductID", "Value":  "MathWorks-MATLAB-Linux" },
+                    { "Key": "mw-StackName", "Value": { "Ref" : "AWS::StackName" }}
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "#!/bin/bash",
+                                "",
+                                "# Copyright 2022 The MathWorks, Inc.",
+                                "",
+                                "STARTUP_FOLDER=/opt/mathworks/startup",
+                                "# Load startup variables",
+                                "if [[ -r ${STARTUP_FOLDER}/.env ]]; then",
+                                "    set -o allexport",
+                                "    source ${STARTUP_FOLDER}/.env",
+                                "    set +o allexport",
+                                "fi",
+                                "",
+                                "# Define startup parameters",
+                                { "Fn::Sub": [ "export PASSWORD=${PasswordBase64}", { "PasswordBase64": {"Fn::Base64": {"Ref": "Password"}} } ] },
+                                { "Fn::Sub": "export MLM_LICENSE_FILE=${LicenseManager}" },
+                                { "Fn::Sub": [ "export CLOUD_LOG_NAME=${LogGroupName}", { "LogGroupName": {"Fn::If": ["UseCloudWatch", {"Ref": "MWLogLocation"}, ""]} } ] },
+                                { "Fn::Sub": "export ACCESS_PROTOCOL='${AccessProtocol}'" },
+                                { "Fn::Sub": "export ENABLE_MATLAB_PROXY='${EnableMATLABProxy}'"},
+                                { "Fn::Sub": "export OPTIONAL_USER_COMMAND='${OptionalUserCommand}'" },
+                                "",
+                                "# Run startup scripts",
+                                "mkdir -p /var/log/mathworks",
+                                "run-parts --exit-on-error --verbose --regex '^[0-9]+_.+$' ${STARTUP_FOLDER} >> /var/log/mathworks/startup.log 2>&1",
+                                "",
+                                "# Signal the status from cfn-init",
+                                { "Fn::Sub": "/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --region ${AWS::Region} --resource MATLABEC2Instance"}
+                            ]
+                        ]
+                    }
+                }
+            },
+            "CreationPolicy": {
+                "ResourceSignal": {
+                    "Timeout": "PT15M"
+                }
+            }
+        },
+        "ElasticIP": {
+            "Type": "AWS::EC2::EIP",
+            "Condition": "UseElasticIPAddress",
+            "Properties": {
+                "InstanceId": {"Ref" : "MATLABEC2Instance"},
+                "Domain": "vpc"
+            }
+        },
+        "document": {
+            "Type": "AWS::SSM::Document",
+            "Condition": "CreateNewRole",
+            "Properties": {
+                "DocumentType": "Command",
+                "Content": {
+                    "schemaVersion": "2.2",
+                    "description": "Run a script on Linux instances.",
+                    "parameters": {
+                        "commands": {
+                            "type": "String",
+                            "description": "Command to run on EC2 instance",
+                            "default": "echo 'Hello World'"
+                        }
+                    },
+                    "mainSteps": [
+                        {
+                            "action": "aws:runShellScript",
+                            "name": "runCommands",
+                            "inputs": {
+                                "timeoutSeconds": "60",
+                                "runCommand": [
+                                    "{{ commands }}"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    },
+    "Parameters": {
+        "InstanceType": {
+            "Description": "AWS instance type to use for MATLAB. For more information about instance types, see https://aws.amazon.com/ec2/instance-types.",
+            "Default": "m5.xlarge",
+            "Type": "String"
+        },
+        "InstanceName": {
+            "Description": "Name for the MATLAB virtual machine.",
+            "Default": "MATLAB Desktop",
+            "Type": "String"
+        },
+        "AccessProtocol": {
+            "Description": "Access protocol used to connect to the instance.",
+            "Default":"RDP",
+            "Type":"String",
+            "AllowedValues": ["NICE DCV","RDP"]
+        },
+        "EnableMATLABProxy": {
+            "Description": "Option that enables access to MATLAB in a browser on your cloud instance. Opening MATLAB in a browser starts a MATLAB session separate from your Remote Desktop Protocol (RDP) session or NICE DCV session.", 
+            "Default":"Yes",
+            "Type":"String",
+            "AllowedValues": ["Yes","No"]
+        },
+        "EnablePublicIPAddress": {
+            "Description": "Choose whether to attach a public IP address to the MATLAB EC2 instance. For details about using a private network configuration, see [Configure Private Network](#configure-private-network).",
+            "Type": "String",
+            "AllowedValues": [
+              "Yes",
+              "No"
+            ],
+            "Default": "Yes"
+        },
+        "UseElasticIpAddress": {
+            "Description": "Flag specifying whether or not you want to keep the same public IP address for the instance.",
+            "Default":"No",
+            "Type":"String",
+            "AllowedValues": ["Yes","No"]
+        },
+        "RootVolumeSize": {
+            "Description": "Size of the root volume, in GiB.",
+            "Default": "128",
+            "Type": "Number",
+            "MinValue": "128",
+            "MaxValue": "1024",
+            "ConstraintDescription": "Size must be between 128 and 1024 GiB"
+        },
+        "CustomIamRole": {
+            "Description": "Name of a custom IAM Role to associate with this instance. Specify a role that has the necessary permissions listed in the Permission file in the GitHub repository: https://github.com/mathworks-ref-arch/matlab-on-aws/permission.md. If not specified, a predefined role is used.",
+            "Default": "",
+            "Type": "String"
+        },
+        "AdditionalIamPolicies": {
+            "Description": "Semicolon-delimited list of IAM Policy ARNs to add to the predefined role. This option cannot be used with a custom IAM Role.",
+            "Default": "",
+            "Type": "String",
+            "AllowedPattern": "^(arn:[^:;]+:iam::[^:;]+:policy\/[^:;]+(;arn:[^:;]+:iam::[^:;]+:policy\/[^:;]+)*)?$",
+            "ConstraintDescription": "If specified, must be a semicolon (;) delimited list of ARNs (arn:<partition>:iam::<account-id>:policy/<resource-id>)."
+        },
+        "VPC": {
+            "Description": "ID of an existing VPC to deploy this stack in.",
+            "Type": "AWS::EC2::VPC::Id",
+            "ConstraintDescription": "Must be the ID of an existing VPC.",
+            "AllowedPattern" : ".+"
+        },
+        "Subnet": {
+            "Description": "ID of an existing subnet in the VPC.",
+            "Type": "AWS::EC2::Subnet::Id",
+            "ConstraintDescription": "Must be the ID of an existing subnet within the chosen VPC.",
+            "AllowedPattern" : ".+"
+        },
+        "SSHKeyName": {
+            "Description": "Name of an existing EC2 key pair to allow SSH access to all the instances. For more information about creating these key pairs, see https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html.",
+            "Type": "AWS::EC2::KeyPair::KeyName",
+            "ConstraintDescription": "Must be the name of an existing EC2 KeyPair.",
+            "AllowedPattern" : ".+"
+        },
+        "ClientIPAddress": {
+            "Description": "Comma-separated list of IP address ranges that will be allowed to connect to this instance. Each IP CIDR must have the format <ip_address>/<mask>. The mask determines the number of IP addresses to include. A mask of 32 specifies a single IP address. Examples of allowed values: 10.0.0.1/32, 10.0.0.0/16,192.34.56.78/32. To identify the public IP address of your machine, you can use https://checkip.amazonaws.com. To build a specific range, you can use https://www.ipaddressguide.com/cidr. To determine which address is appropriate, contact your IT administrator.",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "189",
+            "AllowedPattern": "^((\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2}))(,((\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2}))){0,9}$",
+            "ConstraintDescription": "Must be a comma-separated list of valid IP CIDR ranges of the form x.x.x.x/x. A maximum of 10 such IP CIDRs are allowed in the list."
+        },
+        "Password": {
+            "NoEcho": "true",
+            "Description": "Password for the \"ubuntu\" user. You must also enter this password as an authentication token to access MATLAB in a browser on your cloud instance.",
+            "Type": "String",
+            "ConstraintDescription": "Must have a minimum of 14 characters, 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character",
+            "AllowedPattern": "^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^a-zA-Z0-9]).{14,}$"
+        },
+        "ConfirmPassword": {
+            "NoEcho": "true",
+            "Description": "Confirm password.",
+            "Type": "String"
+        },
+        "LicenseManager": {
+            "Description": "Optional License Manager for MATLAB, specified as a string of the form <port>@<hostname>. If not specified, online licensing is used instead. If specified, the network license manager (NLM) must be accessible from the specified VPC and subnets. To use the private hostname of the NLM hub instead of the public hostname, specify the security group ID of the NLM hub in the AdditionalSecurityGroup parameter. For more information, see https://github.com/mathworks-ref-arch/license-manager-for-matlab-on-aws.",
+            "Type": "String",
+            "Default": "",
+            "AllowedPattern": "([0-9]+@[a-zA-Z0-9.\\-]+)?",
+            "ConstraintDescription": "If specified, must be of the form <port>@<hostname>"
+        },
+        "EnableCloudWatch": {
+            "Description": "Flag specifying whether to enable cloudwatch logging for the MATLAB instance. For private instances, CloudWatch logs might not be updated unless you set up a NAT Gateway or VPC endpoint. For details about private networking, see [Configure Private Network](#configure-private-network).",
+            "Type": "String",
+            "AllowedValues" : ["Yes", "No"],
+            "Default": "No"
+        },
+        "AutoShutdown": {
+            "Description": "Choose whether you want to enable autoshutdown for your instance after a certain number of hours",
+            "Type": "String",
+            "AllowedValues" : ["Never", "After 1 hour","After 2 hours","After 3 hours","After 4 hours","After 5 hours","After 6 hours","After 7 hours","After 8 hours","After 9 hours","After 10 hours","After 11 hours","After 12 hours","After 13 hours","After 14 hours","After 15 hours","After 16 hours","After 17 hours","After 18 hours","After 19 hours","After 20 hours","After 21 hours","After 22 hours","After 23 hours","After 24 hours"],
+            "Default": "Never"
+        },
+        "AdditionalSecurityGroup": {
+            "Description": "(Optional) ID of an additional security group to place the instances in. Often the security group of the License Manager for MATLAB.",
+            "Type": "String",
+            "Default": ""
+        },
+        "CustomAmiId": {
+            "Default": "",
+            "Description": "(Optional) ID of a custom Amazon Machine Image (AMI) in the target region. If the build has been customized then the resulting machine image might no longer be compatible with the provided CloudFormation template. In some cases you can restore compatability by making corresponding modifications to the CloudFormation template. The ID must start with 'ami-'.",
+            "Type": "String"
+          },
+        "OptionalUserCommand": {
+            "Description": "Provide an optional inline shell command to run on machine launch. For example, to set an environment variable CLOUD=AWS, use this command, excluding the angle brackets: <echo -e \"export CLOUD=AWS\" | tee -a /etc/profile.d/setenvvar.sh && source /etc/profile>. To run an external script, use this command, excluding the angle brackets: <wget -O /tmp/my-script.sh \"https://www.example.com/script.sh\" && bash /tmp/my-script.sh>. Find the logs at '/var/log/mathworks/startup.log'.",
+            "Type": "String",
+            "Default": ""
+        }
+    },
+    "Rules": {
+        "ElasticIPRequiresPublicIP": {
+            "RuleCondition": {
+                "Fn::Equals": [
+                    {
+                        "Ref": "EnablePublicIPAddress"
+                    },
+                    "No"
+                ]
+            },
+            "Assertions": [
+                {
+                    "Assert": {
+                        "Fn::Equals": [
+                            {"Ref": "UseElasticIpAddress"},
+                            "No"
+                        ]
+                    },
+                    "AssertDescription": "Elastic IP cannot be used when Public IP address is disabled."
+                }
+            ]
+        },
+        "matchPasswords": {
+            "Assertions": [
+                {
+                    "Assert": {
+                        "Fn::Equals": [
+                            {
+                                "Ref": "Password"
+                            },
+                            {
+                                "Ref": "ConfirmPassword"
+                            }
+                        ]
+                    },
+                    "AssertDescription": "Passwords do not match"
+                }
+            ]
+        },
+        "SubnetInVPC": {
+            "Assertions": [
+                {
+                    "Assert": {
+                        "Fn::EachMemberEquals": [
+                            {
+                            "Fn::ValueOfAll": [
+                                "AWS::EC2::Subnet::Id",
+                                "VpcId"
+                            ]
+                            },
+                            {
+                                "Ref": "VPC"
+                            }
+                        ]
+                    },
+                    "AssertDescription":"Subnet must exist in the VPC you have selected"
+                }
+            ]
+        },
+        "NoAdditionalPoliciesOnCustomRole" : {
+            "RuleCondition": {
+                "Fn::Not": [{"Fn::Equals": [{"Ref": "CustomIamRole"}, ""]}]
+            },
+            "Assertions": [
+                {
+                    "Assert": {
+                        "Fn::Equals": [{"Ref": "AdditionalIamPolicies"}, ""]
+                    },
+                    "AssertDescription": "You cannot add IAM Policies when using a custom IAM Role."
+                }
+            ]
+        }
+    },
+    "Conditions": {
+        "UsePublicIp": {
+            "Fn::Equals": [
+              {
+                "Ref": "EnablePublicIPAddress"
+              },
+              "Yes"
+            ]
+        },
+        "CreateNewRole": {
+            "Fn::Equals": [{"Ref": "CustomIamRole"}, ""]
+        },
+        "UseAdditionalPolicies": {
+            "Fn::Not": [{"Fn::Equals": [{"Ref": "AdditionalIamPolicies"}, ""]}]
+        },
+        "UseCloudWatch": {
+            "Fn::Equals": [{"Ref": "EnableCloudWatch"}, "Yes"]
+        },
+        "UseNICEDCV": {
+            "Fn::Equals": [{"Ref": "AccessProtocol"}, "NICE DCV"]
+        },
+        "UseXRDP": {
+            "Fn::Equals": [{"Ref": "AccessProtocol"}, "RDP"]
+        },
+        "UseMATLABProxy": {
+            "Fn::Equals": [{"Ref": "EnableMATLABProxy"}, "Yes"]
+        },
+        "UseElasticIPAddress": {
+            "Fn::Equals": [{"Ref": "UseElasticIpAddress"}, "Yes"]
+        },
+        "UseCustomAMI":{
+            "Fn::Not": [ { "Fn::Equals": [ { "Ref": "CustomAmiId" }, "" ] } ]
+        },
+        "AddSG": {
+            "Fn::Not": [{"Fn::Equals": [{"Ref": "AdditionalSecurityGroup"}, ""]}]
+        }
+    },
+    "Outputs": {
+        "CloudWatchLogs": {
+            "Condition": "UseCloudWatch",
+            "Description": "The cloudwatch logs containing logging information about the MATLAB instance",
+            "Value": { "Fn::Sub": "https://console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/${MWLogLocation}" }
+        },
+        "NiceDCVConnection": {
+            "Condition": "UseNICEDCV",
+            "Description": "URL of the newly created EC2 instance to connect to the session via NICE DCV",
+            "Value": { "Fn::If": [ "UsePublicIp", { "Fn::Sub": "https://${MATLABEC2Instance.PublicDnsName}:8443/#console" }, { "Fn::Sub": "https://${MATLABEC2Instance.PrivateDnsName}:8443/#console" } ] }
+        },
+        "RDPConnection": {
+            "Condition": "UseXRDP",
+            "Description": "DNS of the newly created EC2 instance.",
+            "Value": {
+                "Fn::If": [
+                    "UsePublicIp",
+                    {
+                        "Fn::GetAtt": [
+                        "MATLABEC2Instance",
+                        "PublicDnsName"
+                        ]
+                    },
+                    {
+                        "Fn::GetAtt": [
+                        "MATLABEC2Instance",
+                        "PrivateDnsName"
+                        ]
+                    }
+                ]
+            }
+        },
+        "BrowserConnection": {
+            "Condition": "UseMATLABProxy",
+            "Description": "URL to connect to and open MATLAB in a browser.",
+            "Value": { "Fn::If": [ "UsePublicIp", { "Fn::Sub": "https://${MATLABEC2Instance.PublicDnsName}:8123" }, { "Fn::Sub": "https://${MATLABEC2Instance.PrivateDnsName}:8123" } ] }
+        }
+    },
+    "Metadata": {
+        "AWS::CloudFormation::Interface": {
+            "ParameterGroups": [
+                {
+                    "Label": {
+                        "default": "EC2 Instance"
+                    },
+                    "Parameters": [
+                        "InstanceName",
+                        "InstanceType",
+                        "RootVolumeSize",
+                        "CustomIamRole",
+                        "AdditionalIamPolicies"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Network Configuration"
+                    },
+                    "Parameters": [
+                        "VPC",
+                        "Subnet",
+                        "AdditionalSecurityGroup",
+                        "EnablePublicIPAddress",
+                        "UseElasticIpAddress"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Remote Access"
+                    },
+                    "Parameters": [
+                        "AccessProtocol",
+                        "EnableMATLABProxy",
+                        "ClientIPAddress",
+                        "SSHKeyName",
+                        "Password",
+                        "ConfirmPassword"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "License Configuration"
+                    },
+                    "Parameters": [
+                        "LicenseManager"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Logging Configuration"
+                    },
+                    "Parameters": [
+                        "EnableCloudWatch"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Autoshutdown Configuration"
+                    },
+                    "Parameters": [
+                        "AutoShutdown"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Custom AMI"
+                    },
+                    "Parameters": [
+                        "CustomAmiId"
+                    ]
+                },
+                {
+                    "Label": {
+                        "default": "Optional User Command"
+                    },
+                    "Parameters": [
+                        "OptionalUserCommand"
+                    ]
+                }
+            ],
+            "ParameterLabels": {
+                "ClientIPAddress": {
+                    "default": "Allow connections from"
+                },
+                "UseElasticIpAddress": {
+                    "default": "Keep public ip the same"
+                },
+                "InstanceType": {
+                    "default": "AWS EC2 Instance type"
+                },
+                "InstanceName": {
+                    "default": "Instance Name"
+                },
+                "RootVolumeSize": {
+                    "default": "Storage Size (GiB)"
+                },
+                "CustomIamRole": {
+                    "default": "Custom IAM Role (Optional)"
+                },
+                "AdditionalIamPolicies": {
+                    "default": "Additional IAM Policies (Optional)"
+                },
+                "VPC": {
+                    "default": "VPC to deploy this stack to"
+                },
+                "Subnet": {
+                    "default": "Subnet"
+                },
+                "EnablePublicIPAddress": {
+                    "default": "Choose if a public IP address should be attached to the MATLAB EC2 instance"
+                },
+                "Password": {
+                    "default": "Remote password"
+                },
+                "ConfirmPassword": {
+                    "default": "Confirm remote password"
+                },
+                "SSHKeyName": {
+                    "default": "SSH Key Pair"
+                },
+                "EnableMATLABProxy": {
+                    "default": "Enable browser access for MATLAB" 
+                },
+                "LicenseManager": {
+                    "default": "License Manager for MATLAB connection string"
+                },
+                "AdditionalSecurityGroup": {
+                    "default": "Additional security group to place instances in"
+                },
+                "EnableCloudWatch": {
+                    "default": "Configure cloudwatch logging for the MATLAB instance"
+                },
+                "AccessProtocol": {
+                    "default": "Remote access protocol"
+                },
+                "CustomAmiId": {
+                    "default": "Custom AMI ID (Optional)"
+                },
+                "OptionalUserCommand": {
+                    "default": "Optional user inline command"
+                }
+            }
+        }
+    }
+}
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/README.md">
+# MATLAB on Amazon Web Services (Linux VM)
+
+## Step 1. Launch the Template
+
+Click the **Launch Stack** button to deploy a standalone MATLAB&reg; desktop client on AWS&reg;. This opens the CloudFormation Create Stack screen in your web browser.
+
+| Region | Launch Link |
+| --------------- | ----------- |
+{% for region in regions -%}
+| **{{ region }}** | [![alt text](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png "Start a MATLAB instance using the template")](https://{{ region }}.console.aws.amazon.com/cloudformation/home?region={{ region }}#/stacks/create/review?templateURL={{ template_url }}) |
+{% endfor %}
+
+**Note**: Creating a stack on AWS can take a few minutes.
+
+## Step 2. Configure the Cloud Resources
+After you click the Launch Stack button above, the “Create stack” page will open in your browser where you can configure the parameters. It is easier to complete the steps if you position these instructions and the AWS console window side by side.
+
+1. Specify a stack name. This will be shown in the AWS CloudFormation console and must be unique within the AWS account.
+
+
+2. Specify and check the defaults for these resource parameters:
+
+| Parameter label | Description |
+| --------------- | ----------- |
+{% for parameter in parameters -%}
+| **{{ parameter.label }}** | {{ parameter.description }} |
+{% endfor %}
+
+>**Note**: In the capabilities section, you must acknowledge that AWS Cloudformation might create IAM resources and autoexpand nested templates when creating the stack.
+
+3. Click the **Create Stack** button.  The CloudFormation service will start creating the resources for the stack. <p>After clicking **Create** you will be taken to the *Stack Detail* page for your stack. Wait for the Status to reach **CREATE\_COMPLETE**. This may take up to 10 minutes.</p>
+
+## Step 3. Connect to the Virtual Machine in the Cloud
+
+If you chose RDP, then:
+1. Expand the **Outputs** section in the the *Stack Detail* page.
+2. Find and click the key named `RDPConnection` and copy the corresponding DNS name listed under value. *For example*: ec2-11-222-33-44.compute-1.amazonaws.com, or ip-11-222-33-44.ec2.internal, for a private instance.
+3. Launch any remote desktop client, paste the DNS name in the appropriate field, and connect. On the Windows Remote Desktop Client you need to paste the DNS name in the **Computer** field and click **Connect**.
+4. In the login screen displayed, use the username `ubuntu` and the password you specified while setting up the stack in [Step 2](#step-2-configure-the-stack).
+
+If you chose NICE DCV, then:
+1. Expand the **Outputs** section in the the *Stack Detail* page.
+2. Find and click the key named `NiceDCVConnection`.
+3. In the login screen displayed, use the username `ubuntu` and the password you specified while setting up the stack in [Step 2](#step-2-configure-the-stack).
+
+If you chose to enable browser access for MATLAB, then:
+1. Expand the **Outputs** section in the *Stack Details* page.
+2. Find and click the key named `BrowserConnection`.
+3. On the login screen, use the password you specified while deploying the stack in [Step 2](#step-2-configure-the-stack) as the 'auth token' to authenticate.
+4. Browser access for MATLAB is enabled using `matlab-proxy`, a Python&reg; package developed by MathWorks&reg;. For more information on `matlab-proxy`, see [MATLAB Proxy on Github](https://github.com/mathworks/matlab-proxy).
+
+## Step 4. Start MATLAB
+Double-click the MATLAB icon on the virtual machine desktop to start MATLAB. The first time you start MATLAB, you need to enter your MathWorks Account credentials to license MATLAB. For other ways to license MATLAB, see [MATLAB Licensing in the Cloud](https://www.mathworks.com/help/install/license/licensing-for-mathworks-products-running-on-the-cloud.html).
+
+>**Note**: It may take up to a minute for MATLAB to start the first time.
+
+
+# Additional Information
+
+## Configure Private Network
+To set up a private networking configuration for the MATLAB EC2 instance, you can set the `EnablePublicIPAddress` parameter to `No` to avoid attaching a public IP to the MATLAB EC2 instance. Ensure these requirements before deploying your stack:
+
+- **Client Access**: Specify the private IP addresses of the jumpbox or client(s) that will access the MATLAB EC2 instance, using the `ClientIPAddress` parameter. 
+- **Online Licensing**: To use online licensing for MATLAB, your MATLAB EC2 instance must be able to access domains at `*.mathworks.com`. Allow outbound access to these domains by setting up an appropriate method in your VPC.
+- **Stack Deployment**: Without a public IP, the MATLAB EC2 instance might get stuck in the `CREATE_IN_PROGRESS` state during stack deployment. To avoid this, ensure that your VPC has a NAT Gateway or a [VPC endpoint for the AWS CloudFormation service (AWS)](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/vpc-interface-endpoints.html#vpc-endpoint-create) before deployment.
+- **CloudWatch Logs**: To deliver CloudWatch logs from the instance, ensure that your VPC has either a NAT Gateway or a [VPC endpoint for CloudWatch service (AWS)](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/cloudwatch-logs-and-interface-VPC.html#create-VPC-endpoint-for-CloudWatchLogs).
+- **NICE DCV and S3 Data transfer**: To use NICE DCV or for data transfer between the MATLAB EC2 instance and S3 buckets, ensure that your VPC is configured to use [Gateway endpoint for the Amazon S3 service](https://docs.aws.amazon.com/vpc/latest/privatelink/vpc-endpoints-s3.html#create-gateway-endpoint-s3). The MATLAB EC2 instance must be able to reach the S3 service for NICE DCV license verification.
+
+To easily create a VPC with these settings, you can use the [VPC CloudFormation Template](https://github.com/mathworks-ref-arch/iac-building-blocks/tree/main/aws/vpc-template/v1/README.md).
+
+## Delete Your Cloud Resources
+
+Once you have finished using your stack, it is recommended that you delete all resources to avoid incurring further cost. To delete the stack, do the following:
+1. Log in to the AWS Console.
+2. Go to the AWS CloudFormation page and select the stack you created.
+3. Click the **Actions** button and click **Delete Stack** from the menu that appears.
+
+## Nested Stacks
+
+This CloudFormation template uses nested stacks to reference templates used by multiple reference architectures. For details, see the [MathWorks Infrastructure as Code Building Blocks](https://github.com/mathworks-ref-arch/iac-building-blocks) repository.
+
+## CloudWatch Logs
+CloudWatch logs enables you to access logs from all the resources in your stack in a single place. To use CloudWatch logs, launch the stack with the feature "Configure cloudwatch logging for the MATLAB instance" enabled. Once the stack deployment is complete, you can access your logs in the "Outputs" of the stack by clicking the link next to "CloudWatchLogs". Note that if you delete the stack, the CloudWatch log group is also deleted. For more information, see [What is Amazon CloudWatch Logs?](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/WhatIsCloudWatchLogs.html).
+
+----
+
+Copyright 2018-2025 The MathWorks, Inc.
+
+----
+
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/reporoll.py">
+#!/usr/bin/env python3
+import os
+import fnmatch
+
+# Configuration: Folders and files to always ignore
+IGNORE_DIRS = {
+    '.git', '__pycache__', 'node_modules', 'venv', '.env', 
+    '.idea', '.vscode', 'dist', 'build', 'coverage'
+}
+
+IGNORE_FILES = {
+    'package-lock.json', 'yarn.lock', '*.lock', '*.pyc', 
+    '*.png', '*.jpg', '*.jpeg', '*.gif', '*.ico', '*.svg', 
+    '*.exe', '*.dll', '*.so', '*.dylib', '.DS_Store'
+}
+
+def should_ignore(name, is_dir=False):
+    """Checks if a file or directory should be ignored."""
+    if is_dir:
+        return name in IGNORE_DIRS
+    
+    # Check exact matches
+    if name in IGNORE_FILES:
+        return True
+    
+    # Check glob patterns (e.g., *.png)
+    for pattern in IGNORE_FILES:
+        if fnmatch.fnmatch(name, pattern):
+            return True
+    return False
+
+def is_binary(file_path):
+    """Simple heuristic to detect binary files."""
+    try:
+        with open(file_path, 'tr') as check_file:
+            check_file.read()
+            return False
+    except:
+        return True
+
+def generate_tree(start_path):
+    """Generates a string representation of the file tree."""
+    tree_str = "PROJECT STRUCTURE:\n"
+    for root, dirs, files in os.walk(start_path):
+        dirs[:] = [d for d in dirs if not should_ignore(d, is_dir=True)]
+        level = root.replace(start_path, '').count(os.sep)
+        indent = ' ' * 4 * (level)
+        tree_str += f"{indent}{os.path.basename(root)}/\n"
+        subindent = ' ' * 4 * (level + 1)
+        for f in files:
+            if not should_ignore(f):
+                tree_str += f"{subindent}{f}\n"
+    return tree_str
+
+def roll_codebase(start_path):
+    """Reads all files and formats them into a prompt."""
+    output = []
+    
+    # 1. Add the file tree
+    output.append(generate_tree(start_path))
+    output.append("\n" + "="*50 + "\n")
+    output.append("FILE CONTENTS:\n")
+
+    # 2. Walk through files
+    for root, dirs, files in os.walk(start_path):
+        # Modify dirs in-place to skip ignored directories
+        dirs[:] = [d for d in dirs if not should_ignore(d, is_dir=True)]
+
+        for file in files:
+            if should_ignore(file):
+                continue
+
+            file_path = os.path.join(root, file)
+            
+            # Skip binaries
+            if is_binary(file_path):
+                print(f"Skipping binary file: {file_path}")
+                continue
+
+            # Format the output using XML tags for clarity
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    
+                output.append(f'<file path="{file_path}">\n{content}\n</file>\n')
+            except Exception as e:
+                print(f"Error reading {file_path}: {e}")
+
+    return "\n".join(output)
+
+if __name__ == "__main__":
+    # Get current directory
+    cwd = os.getcwd()
+    print(f"Rolling codebase from: {cwd} ...")
+    
+    full_prompt = roll_codebase(cwd)
+    
+    # Write to file
+    output_filename = "codebase_prompt.txt"
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write(full_prompt)
+        
+    print(f"Done! Prompt saved to: {output_filename}")
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/toplevel/LICENSE.md">
+MATHWORKS CLOUD REFERENCE ARCHITECTURE LICENSE
+
+The files in this GitHub repository refer to commercial software products and services, virtual machine images, and related materials of The MathWorks, Inc. (“MathWorks Programs”). MathWorks Programs are separately licensed under the MathWorks Software License Agreement, available in the desktop installation of the MathWorks Programs or in the virtual machine image. The files in this GitHub repository may also refer to third-party software licensed under separate terms provided by such third parties.
+
+The following license terms apply only to the files in this GitHub repository, including files in this folder and its subfolders, and do not apply to MathWorks Programs. References to “software” and “code” in the following license terms refer to the files in this GitHub repository.
+
+Copyright 2020 - {{current_year}} The MathWorks, Inc.
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+3. In all cases, the software is, and all modifications and derivatives of the software shall be, licensed to you solely for use in conjunction with MathWorks products and service offerings.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/toplevel/README.md">
+# MATLAB on Amazon Web Services
+
+This repository shows how to deploy MATLAB&reg; on an Amazon EC2&reg; instance using your Amazon&reg; Web Services (AWS&reg;) account and connect to it using the Remote Desktop Protocol (RDP), SSH, or NICE DCV. The automation uses an AWS CloudFormation template. 
+
+For information about the architecture of this solution, see [Learn about Architecture](#learn-about-architecture). For information about templates, see [AWS CloudFormation Templates](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-guide.html).
+
+This reference architecture has been reviewed and qualified by AWS.
+
+![AWS Qualified Software badge](img/aws-qualified-software.png)
+
+
+## Requirements
+You need:
+* A MATLAB license. For more information, see [License Requirements for MATLAB on Cloud Platforms](https://www.mathworks.com/help/install/license/licensing-for-mathworks-products-running-on-the-cloud.html).
+* An [Amazon Web Services (AWS)](https://aws.amazon.com) account.
+* A key pair for your AWS account, in the appropriate region. For more information, see [Amazon EC2 Key Pairs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html).
+
+## Costs
+You are responsible for the cost of the AWS services used when you create cloud resources using this guide. Resource settings, such as instance type, affect the cost of deployment. For cost estimates, see the pricing pages for each AWS service you will be using. Prices are subject to change.
+
+# Deployment Steps
+By default, the MATLAB reference architectures below launch prebuilt machine images, described in [Learn about Architecture](#learn-about-architecture).
+Using a prebuilt machine image is the easiest way to deploy a MATLAB reference architecture.
+Prebuilt images are provided for the five most recent MATLAB releases.
+Alternatively, to build your own machine image,
+see [Build and Deploy Your Own Machine Image](#build-and-deploy-your-own-machine-image).
+You can also use this workflow to install an earlier MATLAB release.
+
+## Deploy Prebuilt Machine Image
+To view instructions for deploying the MATLAB reference architecture, select a MATLAB release:
+
+| Linux | Windows | Status |
+| ----- | ------- | ------- |
+{% for release in releases -%}
+| {% if release.dir %}[{{ release.label }}](releases/{{ release.dir }}/README.md){% endif %} | {% if release.dual_url %}[{{ release.label }}]({{ release.dual_url }}/README.md){% endif %} | {% if loop.index >= 4 %}⚠️ Prebuilt will be removed in {{ release.removal_month }} {{ release.removal_year }}.{% else %}✅ Prebuilt available.{% endif %} |
+{% endfor %}| [Earlier/Custom](./packer/v1) | {% if dual_url %}[Earlier/Custom]({{ dual_url }}/tree/master/packer/v1){% endif %} | For earlier MATLAB releases, you must build your own machine image. |
+
+The above instructions allow you to launch instances based on the latest prebuilt MathWorks&reg; Amazon Machine Images (AMIs).
+MathWorks periodically replaces older AMIs with new images.
+For more details, see
+[When are the MathWorks Amazon Machine Images updated?](#when-are-the-mathWorks-amazon-machine-images-updated)
+
+## Build and Deploy Your Own Machine Image
+For details of the scripts which form the basis of the MathWorks Linux AMI build process,
+see [Build Your Own Machine Image](./packer/v1).
+You can use these scripts to build a custom Linux machine image for running MATLAB on Amazon Web Services.
+You can then deploy this custom image with the MathWorks infrastructure as code (IaC) templates.
+
+You can customize the MATLAB release which is installed as part of this custom build.
+This includes MATLAB releases supported by the prebuilt images, as well as earlier MATLAB releases.
+For more details,
+see [Customize MATLAB Release to Install](./packer/v1#customize-matlab-release-to-install).
+
+Platform engineering teams can use these scripts to take advantage of optimizations MathWorks has developed
+for running MathWorks products in the cloud.
+For more details, see [What are the advantages of building images with MathWorks scripts?](#what-are-the-advantages-of-building-images-with-mathworks-scripts)
+
+## Learn about Architecture
+
+![MATLAB on AWS Reference Architecture](img/aws-matlab-diagram.png)
+
+Deploying this reference architecture sets up a single AWS EC2 instance containing MATLAB, a private VPC with an internet gateway, a private subnet, and a security group that opens the appropriate ports for SSH and RDP access.
+
+The Amazon Machine Image (AMI) contains pre-installed drivers and the following software:
+* MATLAB, Simulink, toolboxes, and support for GPUs.
+* Add-ons: several pretrained deep neural networks for classification, feature extraction, and transfer learning with Deep Learning Toolbox&trade;, including GoogLeNet, ResNet-50, and NASNet-Large.
+
+### Resources
+
+The following resources will be created as part of the CloudFormation Stack:
+
+1. Security Group for SSH and RDP access
+2. EC2 Instance
+
+The following resources might be created, depending on your deployment configuration:
+
+1. IAM role
+2. A CloudWatch log group
+3. An elastic IP address
+4. A SSM document
+
+## FAQ
+
+### What permissions are required by end users to deploy MATLAB in an AWS account?
+
+You do not need administrative-level access in AWS to deploy this reference architecture. If users already have the necessary permissions, no further action is required. If you are unsure whether you have sufficient permissions to deploy MATLAB on AWS, check with your AWS administrator and share the [permission document](./permission.md) with them. Using this document, administrators can assign the required permissions following the principle of least privilege. This document is kept current with the latest MATLAB release.
+
+AWS administrators can assign the necessary permissions to end users in two ways:
+
+* **Full Stack Creation Workflow**: MATLAB Users can create the entire stack. This approach is recommended for streamlined setups.
+
+* **Pass Role Workflow**: MATLAB Users can only create non-IAM resources in their stack. AWS admins must create necessary IAM roles that the user must pass to the stack. This approach is suitable for tighter control over IAM policies.
+
+For both options, the permission document provides a CloudFormation template to generate the necessary IAM roles and permissions. This template also supports granting additional permissions to EC2 instances depending on specific users' needs.
+
+### When are the MathWorks Amazon Machine Images updated?
+The links in [Deployment Steps](#deployment-steps) launch instances based on the latest MathWorks
+AMIs for at least the four most recent MATLAB releases. MATLAB releases occur twice each year.
+
+For each MATLAB release, MathWorks periodically replaces the corresponding AMI with a newer AMI
+that includes the latest MATLAB updates and important security updates of the base OS image.
+
+When MathWorks replaces an AMI, the older AMI is deleted.
+However, any running instances previously launched from the older AMI are not affected.
+To continue using an older AMI, copy the AMI into your AWS account.
+For more details on how to copy an AMI, see
+[How do I copy the AMI?](#how-do-I-copy-the-ami)
+For more details on how to customize the reference architectures to
+deploy the copied AMI see [How do I customize the AMI?](#how-do-I-customize-the-ami)
+
+### How do I save my changes in the AMI?
+All your files and changes are stored locally on the EC2 Instance. They persist until you either terminate the instance or delete the stack. Stopping the instance does not destroy the data on the instance. If you want your changes to persist outside the stack or before you terminate an instance, you need to:
+* Copy your files to another location, or
+* Create an image of the virtual machine.
+
+### What happens to my data if I shut down the instance?
+To minimize costs, you might want to shut down the instance when you are not using it. When the virtual machine is stopped, you are only charged for storage. To shut down an EC2 instance, locate it in the AWS web console, select the instance and choose “Instance State/Stop” from the “Actions” menu. You can restart it from the same menu. Any files or changes you make to the virtual machine will persist when you shut it down and will be present when you restart it. Shutting down the virtual machine and restarting it might change the public IP address and DNS name. Inspecting the EC2 instance in the AWS console will reveal the new IP address and DNS name.
+
+### How do I keep the same public IP address?
+To avoid having to change the IP address between restarts, enable the **Keep public IP address the same** option during deployment. For more information, see [Elastic IP addresses](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html).
+
+### How do I manage my EC2 quotas?
+See [Amazon EC2 Service Quotas](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-resource-limits.html).
+
+### How do I save or copy an AMI?
+To save an AMI, locate the EC2 Instance in the AWS web console and select **Actions** > **Image** > **Create Image.**
+
+To copy the AMI for a certain MATLAB version to a target region of your choice, follow these steps:
+* Choose the MATLAB release that you want to copy from the Releases folder of this repository. Download and open the CloudFormation template .json file for that release.
+* Locate the Mappings section in the CloudFormation template. Copy the AMI ID for one of the existing regions, for example, us-east-1.
+* To copy the AMI to your target region, see [Copy an AMI](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/CopyingAMIs.html) in the AWS documentation.
+* In the Mappings section of the CloudFormation template, add a new RegionMap pair corresponding to your target region. Insert the new AMI ID of the AMI in the target region.
+* In your AWS Console, change your region to your target region. In the CloudFormation menu, select the **Create Stack > With new resources** option. Provide the modified CloudFormation template.
+
+You can now deploy the AMI in your target region using the AMI that you copied.
+
+### How do I customize the AMI?
+You can customize a prebuilt AMI by launching the reference architecture, applying changes you want to the EC2 Instance (such as installing additional software, drivers, and files), then saving an image of that instance using the AWS Console. For more information, see [How do I save or copy an AMI?](#how-do-i-save-or-copy-an-ami). When you create a stack, replace the AMI ID in the CloudFormation template with the AMI ID of your customized image.
+
+You can also create a custom image by building your own using the Packer scripts we provide. See [Build and Deploy Your Own Machine Image](#build-and-deploy-your-own-machine-image).
+
+### How do I use a different license manager?
+The AMI uses MathWorks Hosted License Manager by default. For information on how to use other license managers, see [MATLAB Licensing in the Cloud](https://www.mathworks.com/help/install/license/licensing-for-mathworks-products-running-on-the-cloud.html).
+
+### What are the advantages of building images with MathWorks scripts?
+Images built with MathWorks scripts are optimized and tested for MathWorks workflows.
+The images are deployed by MathWorks CloudFormation templates following AWS best practices.
+
+The warmup scripts found in [startup](./packer/v1/startup) allow you to start MATLAB faster. The CloudFormation template uses these scripts to automatically initialize MathWorks files on the instance. This allows MATLAB to be responsive in as little as a minute after you start it. These scripts are automatically included in both the prebuilt images and the images that you build using the instructions in [Deployment Steps](#deployment-steps).
+
+Without the optimization scripts, starting a large software application, such as MATLAB, for the first time can potentially take tens of minutes. Subsequent starts of the large software application will be faster. This is because AWS initializes the storage for the EC2 instance, as described in [Initialize Amazon EBS volumes](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-initialize.html).
+
+
+
+Other scripts in this repo also enable options for connecting to the instance, ensure that all the necessary MATLAB dependencies are installed, and make it easy to build an image with an older MATLAB release.
+
+# Technical Support
+To request assistance or additional features, contact [MathWorks Technical Support](https://www.mathworks.com/support/contact_us.html).
+
+----
+
+Copyright 2018-2025 The MathWorks, Inc.
+
+----
+
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/toplevel/permission.md">
+# Assign AWS IAM Permissions for MATLAB Users on Linux
+
+AWS® administrators can grant the least privileged permissions to end users to deploy MATLAB® on a Linux® instance in AWS. If you are an end user, contact your AWS administrator to grant you the necessary permissions.
+
+AWS administrators can choose between two permission levels for their users:
+
+* *Full Stack Creation workflow*: Users can create the entire stack. This approach is recommended for streamlined setups.
+* *Pass Role Workflow*: Users can only create non-IAM resources in their stack. AWS admins must create necessary IAM roles that the user must pass to the stack. This approach is suitable for tighter control over IAM policies.
+
+For both options, see the [Quick Start using AWS CloudFormation template](#quick-start-using-aws-cloudformation-template) section to automatically generate the necessary IAM policies. If you want further configuration of the IAM policies, see [Customize IAM policies](#customize-iam-policies) section.
+
+## Quick Start using AWS CloudFormation template
+
+Using the CloudFormation template below is recommended for most use cases, as it automatically creates and configures your AWS account to grant the necessary permissions to your users.
+
+1. Deploy the Permission CloudFormation template.<br>
+    Click the "Launch Stack" button to open the CloudFormation console, fill out the template parameters, and create the stack. You must be logged in to your AWS account before clicking the button below.<br><br>
+
+   [![Deploy Reference Architecture Permission Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?#/stacks/create/review?templateURL=https://mathworks-reference-architectures-templates.s3.us-east-1.amazonaws.com/permissions-template/v1/0/0/permissions-template.json)<br>
+
+    <details> <summary>CloudFormation template parameters</summary> <table><thead><tr><th>Parameter Label</th><th>Description</th></tr></thead><tbody>
+
+    <tr><td>Enable MATLAB deployment</td><td>Select yes to allow your users to deploy MATLAB. <br><br> <strong>Note: </strong>You might see other MathWorks' cloud products in the CloudFormation console, and if you want, you can enable those for your users as well.</td></tr>
+
+    <tr><td>User permission level</td><td>Choose 'Full Stack Creation' or 'Pass Role' workflows. 'Full Stack Creation' allows users to create the entire stack, including IAM roles, while following the principle of least privilege. Recommended for streamlined setups. 'Pass Role Workflow' limits users to resource creation only. Suitable for tighter control over IAM roles and permissions.</td></tr>
+
+    <tr><td>AWS Region restriction</td><td>Allowed AWS Region to deploy resources. Select '*' for all regions.</td></tr>
+
+    <tr><td>Resource naming prefix</td><td>Prefix to restrict users to create CloudFormation stacks or resources with names starting with this value. Use up to 10 lowercase letters or hyphens. Useful for isolating resources by team (for example, 'engr-', 'mrkt-').</td></tr>
+
+    <tr><td>Additional IAM policies for Common Execution Role</td><td>(Optional) Specify up to five valid IAM policy ARNs (AWS-managed or customer-managed) to grant additional permissions to your users' EC2 instances. These policies must have a path equal to '/MW/' and a name starting with the value in 'Resource Naming Prefix'. Applicable only when you configure 'User Permission Level' to 'Pass Role Workflow'. Users with 'Full Stack Creation' permissions can directly pass IAM policy ARNs during stack deployment.</td></tr>
+
+    <tr><td>IAM role names</td><td>(Optional) Comma-separated list of existing IAM roles to extend permissions to. For example, specify existing IAM roles assumed by users to extend their permissions to allow users to deploy MathWorks' Reference Architecture.</td></tr>
+
+    <tr><td>IAM group names</td><td>(Optional) Comma-separated list of existing IAM groups to extend permissions to. Applies to all members in these groups.</td></tr>
+
+    <tr><td>IAM user names</td><td>(Optional) Comma-separated list of existing IAM users to extend permissions to.</td></tr>
+
+    <tr><td>AWS principal ARN</td><td>(Optional) Specify an AWS principal ARN to assume the IAM role created by this stack. If your AWS Principal is not supported by this template, you can temporarily use '*'. In this case, after deployment, update the IAM role's trust relationship to your custom AWS Principal in the IAM Console.</td></tr>
+
+    <tr><td>AWS principal external ID</td><td>(Optional) A unique identifier to allow third-party access to your AWS resources. This ensures that only trusted parties can assume roles in your account. For more information, see https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_third-party.html.</td></tr>
+
+    <tr><td>SAML federated identity provider ARN</td><td>(Optional) Specify the SAML Federated Identity Provider ARN to assume the provisioning role. If specified, you must also provide the 'SAML audience URL' parameter. Leave blank if you are not using SAML federation for user authentication.</td></tr>
+
+    <tr><td>SAML audience URL</td><td>(Optional) If specified, you must also provide the 'SAMLFederatedIdentityProvider'. Leave blank if you are not using SAML federation for user authentication.</td></tr>
+
+    </tbody></table> </details><br>
+
+    (Optional) CloudFormation parameters offer sufficient flexibility for most use cases, allowing you to attach the generated policies to existing IAM users, groups, or roles, or to associate them with a new IAM role. However, for advanced setup cases, you can [update the IAM role's trust policy in AWS Console](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_update-role-trust-policy.html).
+
+2. Inform your users about the following:
+
+    * Users must ensure that the name of their stacks begins with the *Resource Naming Prefix* that you define in the template. Failure to do so will result in stack creation errors.
+
+    * If you selected the "Pass Role Workflow" option for the user permission level, the CloudFormation template will create an IAM role, which your users must pass its name to "CustomIamRole" parameter when deploying their MATLAB stack. You can find its value in the CloudFormation output tab in AWS console as "CommonExecutionRoleName" output.
+
+## Customize IAM policies
+
+This section provides IAM policy JSONs for advanced use cases, enabling you to create custom IAM policies as an alternative to the managed policies offered by the CloudFormation template. Following this section gives you more control over the permissions but requires more effort and knowledge of AWS IAM. This section can also allow you to gain a clearer understanding of the permissions created by the CloudFormation template.
+
+> <h3>Terminology & Definitions</h3> Before you continue, ensure that you are familiar with these terms.<br><details><summary><strong>Types of IAM Policies</strong></summary><ul><li><strong>Provisioning policy</strong>: A wrapper for permissions needed to create MATLAB deployment resources in the AWS account. Attaching this policy to an IAM user or role will allow them to deploy MATLAB CloudFormation template and its resources.</li><li><strong>Execution policy</strong>: Permissions required by AWS services (e.g., EC2 or Lambda functions) to execute automated workloads, such as pushing logs from an EC2 instance to CloudWatch. This policy is attached to the IAM role assumed by the EC2 instance or Lambda function.</li></ul></details><details><summary><strong>User Permission Levels</strong></summary>AWS administrators can choose between two permission levels for their users.<ul><li><em>Full Stack Creation</em>: This option is recommended for most users due to its streamlined setup process. Users can deploy the entire CloudFormation stack but cannot create additional IAM resources directly. However, the user's stack can create the necessary IAM resources required for deploying MATLAB on AWS.</li><li><em>Pass Role Workflow</em>: This option is suitable for organizations that require stricter control over IAM role creation and permissions. In this workflow, users can only create the necessary resources. The account administrator creates IAM roles to be attached to AWS resources, such as EC2 instances.</li></ul></details><details><summary><b>Trade-offs to consider when choosing between user permission levels</b></summary><p>Selecting the appropriate permission level for your users is important. While both options adhere to the principle of least privileged access, you must consider these trade-offs.</p><table><thead><tr><th>Description</th><th>Full Stack Creation workflow</th><th>Pass Role Workflow</th></tr></thead><tbody><tr><td>High-level responsibilities for admin and user</td><td><ul><li><strong>IAM Administrator:</strong><br>Lower admin involvement. Admin sets up the user role.<br><br></li><li><strong>Reference Architecture User:</strong><br>User deploys the stack.</li></ul></td><td><ul><li><strong>IAM Administrator:</strong><br>Higher admin involvement. Admin sets up the user role.<br>Admin also creates an execution IAM Role and shares its name with the user.<br><br></li><li><strong>Reference Architecture User:</strong><br>User passes the execution IAM Role name to CloudFormation template.<br>User deploys the stack.</li></ul></td></tr><tr><td>Ability to create new IAM Roles</td><td>Users cannot create IAM roles. However, users' stacks can create new IAM roles as required by the reference architecture template. <br><br><strong>Note:</strong> The default IAM policy provided below limits users to create IAM roles only when the CloudFormation template is hosted in MathWorks' approved S3 bucket.<br><br></td><td>Neither users nor their stacks can create IAM roles. Admin needs to create the IAM roles for EC2 instances, Lambda functions, and other AWS services. You can find the <code>Common Execution Role</code> below that you can use for all the services. <br><br><strong>Note:</strong> Even though the <code>Common Execution Role</code> has restricted permissions, it allows different stacks to use the same IAM role and interact with each other's resources. For stricter isolation, create separate IAM roles for each user/stack.</td></tr><tr><td>Additional permissions</td><td>Users can attach additional IAM policies to their EC2 instances when deploying their MATLAB CloudFormation template.<br><br><strong>Note:</strong> These IAM policies must have a path of <code>/MW/</code> and have a name that starts with the value specified as the <code>Resource Naming Prefix</code>, as detailed below. This allows account administrators to control the permissions that can be assigned to different user stacks and EC2 instances.</td><td>Users cannot attach additional IAM policies to their stacks and EC2 instances. Any additional permissions must be pre-configured by the AWS account administrator. For details, refer to the "Additional IAM Policies for Common Execution Role" CloudFormation parameter.</td></tr></tbody></table></details><details><summary><strong>Placeholders in IAM Policy JSONs</strong></summary><p>The JSON policies below contain placeholders denoted by <code>&lt;&lt;</code> and <code>&gt;&gt;</code>. This table explains each placeholder. If you are using these JSONs to create IAM policies, you must replace the placeholders with the appropriate values.</p><table><thead><tr><th>Placeholder</th><th>Description</th></tr></thead><tbody><tr><td><code>&lt;&lt;AWS_REGION&gt;&gt;</code></td><td>AWS Region to limit your users for resource deployment. It can be a specific <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html#concepts-available-regions">AWS Region</a> or <code>*</code> for all regions.</td></tr><tr><td><code>&lt;&lt;AWS_ACCOUNT_ID&gt;&gt;</code></td><td>Your AWS account ID, a 12-digit number.</td></tr><tr><td><code>&lt;&lt;AWS_PARTITION&gt;&gt;</code></td><td>For standard AWS Regions, the partition is <code>aws</code>. For other partitions, it is "aws-partitionname". See AWS documentation on <a href="https://docs.aws.amazon.com/whitepapers/latest/aws-fault-isolation-boundaries/partitions.html">Partitions</a>.</td></tr><tr><td><code>&lt;&lt;AWS_URL_SUFFIX&gt;&gt;</code></td><td>Typically <code>amazonaws.com</code>, but may differ by Region. For example, the suffix for China (Beijing) Region is <code>amazonaws.com.cn</code>.</td></tr><tr><td><code>&lt;&lt;RESOURCE_NAMING_PREFIX&gt;&gt;</code></td><td>Prefix for users to create CloudFormation stacks or resources. Must be ≤10 characters, containing only lowercase letters and hyphens. Used to manage resources by different teams independently.</td></tr></tbody></table></details>
+
+### IAM Policy for Full Stack Creation Workflow
+
+Below IAM Policy allows users to create the entire stack, including IAM roles required in the CloudFormation template. Users can attach additional existing IAM policies to their EC2 instances if these policies use the path '/MW/' and the policy name starts with the 'Resource naming prefix' that you specify in the JSON policy.
+
+<details>
+
+<summary>Provisioning IAM Policy (allows full stack creation)</summary>
+
+```json
+{{full_provisioning_policy}}
+```
+
+</details>
+
+### IAM Policies for Pass Role Workflow
+
+This workflow restricts users from creating IAM roles. Instead, you create a common IAM execution role, and the user must pass the name of the role to the stack during deployment. You can use the provisioning policy below to allow users to deploy the stack without creating IAM roles. This policy is similar to the one in the "Full Stack Creation Workflow" section but excludes any write permissions in the IAM service.
+
+<details>
+
+<summary>Provisioning IAM Policy (doesn't allow IAM resource creation in your users' stacks)</summary>
+
+```json
+{{restricted_provisioning_policy}}
+```
+
+</details>
+
+Since your users cannot create IAM roles within their CloudFormation stacks, you, as the AWS admin, must create a common IAM execution role and share its name with your team, enabling them to pass it to the CloudFormation template when deploying their stacks. You can create this role using the following JSON policies. Ensure you use the path '/MW/' and prefix the role name with the "Resource naming prefix" you specified in the provisioning policy. If you wish to grant more permissions to your user's EC2 instances, you can attach additional IAM policies to this role.
+
+<details>
+
+<summary>Policy for Common Execution Role</summary>
+
+```json
+{{execution_policy}}
+```
+
+</details>
+
+You can use this JSON as your Trust Policy for the Common Execution IAM Role.
+
+<details>
+<summary>Trust relationship JSON for execution role</summary>
+
+```json
+{{execution_policy_trust}}
+
+```
+
+</details>
+
+## Related Information
+
+* [AWS Cloudformation FAQs](https://aws.amazon.com/cloudformation/faqs/)
+* [AWS Identity and Access Management (IAM) FAQs](https://aws.amazon.com/iam/faqs/)
+* [AWS IAM service documentation](https://aws.amazon.com/iam/)
+* [IAM JSON policy reference](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies.html)
+* [Security best practices in IAM & least-privileged access model](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege)
+* [How to use the PassRole permission with IAM roles](https://aws.amazon.com/blogs/security/how-to-use-the-passrole-permission-with-iam-roles/)
+* [How to use trust policies with IAM roles](https://aws.amazon.com/blogs/security/how-to-use-trust-policies-with-iam-roles/)
+* [How to implement the principle of least privilege with CloudFormation StackSets](https://aws.amazon.com/blogs/security/how-to-implement-the-principle-of-least-privilege-with-cloudformation-stacksets/)
+* [Grant a user permissions to pass a role to an AWS service](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_passrole.html)
+
+## Technical Support
+
+To request assistance or additional features, contact [MathWorks Technical Support](https://www.mathworks.com/support/contact_us.html).
+
+----
+
+Copyright 2025 The MathWorks, Inc.
+
+----
+
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/static/SECURITY.md">
+Reporting Security Vulnerabilities
+==================================
+If you believe you have discovered a security vulnerability, please report it to
+security@mathworks.com instead of GitHub. Please see
+[MathWorks Vulnerability Disclosure Policy for Security Researchers](https://www.mathworks.com/company/aboutus/policies_statements/vulnerability-disclosure-policy.html)
+for additional information.
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/internal/permissions/execution_policy_trust.json">
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "lambda.<<AWS_URL_SUFFIX>>"
+            },
+            "Action": [
+                "sts:AssumeRole"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "ec2.<<AWS_URL_SUFFIX>>"
+            },
+            "Action": [
+                "sts:AssumeRole"
+            ]
+        }
+    ]
+}
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/internal/permissions/execution_policy.json">
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/mw-ProductID": "MathWorks-MATLAB-Linux"
+                }
+            },
+            "Action": [
+                "ec2:CreateTags",
+                "ec2:DeleteTags",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:ec2:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:instance/*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:<<RESOURCE_NAMING_PREFIX>>*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": "s3:GetObject",
+            "Resource": "arn:<<AWS_PARTITION>>:s3:::dcv-license.<<AWS_REGION>>/*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": "ec2:DescribeTags",
+            "Resource": "*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "ssm:DescribeAssociation",
+                "ssm:DescribeDocument",
+                "ssm:GetDeployablePatchSnapshotForInstance",
+                "ssm:GetDocument",
+                "ssm:GetManifest",
+                "ssm:GetParameter",
+                "ssm:GetParameters",
+                "ssm:ListAssociations",
+                "ssm:ListInstanceAssociations",
+                "ssm:PutComplianceItems",
+                "ssm:PutConfigurePackageResult",
+                "ssm:PutInventory",
+                "ssm:UpdateAssociationStatus",
+                "ssm:UpdateInstanceAssociationStatus",
+                "ssm:UpdateInstanceInformation"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "ssmmessages:CreateControlChannel",
+                "ssmmessages:CreateDataChannel",
+                "ssmmessages:OpenControlChannel",
+                "ssmmessages:OpenDataChannel"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "ec2messages:AcknowledgeMessage",
+                "ec2messages:DeleteMessage",
+                "ec2messages:FailMessage",
+                "ec2messages:GetEndpoint",
+                "ec2messages:GetMessages",
+                "ec2messages:SendReply"
+            ],
+            "Resource": "*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": "ec2:DescribeInstances",
+            "Resource": "*",
+            "Effect": "Allow"
+        },
+        {
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:/aws/lambda/*EC2ShutdownLambda*",
+            "Effect": "Allow"
+        }
+    ]
+}
+
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/internal/permissions/provisioning_policy.json">
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CloudFormationCreate",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:CreateStack"
+            ],
+            "Resource": [
+                "arn:<<AWS_PARTITION>>:cloudformation:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:stack/<<RESOURCE_NAMING_PREFIX>>*"
+            ],
+            "Condition": {
+                "StringLike": {
+                    "cloudformation:TemplateUrl": [
+                        "https://mathworks-reference-architectures-templates.s3.amazonaws.com/*",
+                        "https://matlab-on-aws.s3.amazonaws.com/*"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "CloudformationActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:DeleteStack",
+                "cloudformation:DescribeStackEvents",
+                "cloudformation:DescribeStacks"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:cloudformation:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:stack/<<RESOURCE_NAMING_PREFIX>>*"
+        },
+        {
+            "Sid": "CloudformationActionsFromCloudFormation2",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:*ChangeSet*",
+                "cloudformation:GetStackPolicy",
+                "cloudformation:GetTemplate",
+                "cloudformation:GetTemplateSummary",
+                "cloudformation:ListStackResources"
+            ],
+            "Resource": [
+                "arn:<<AWS_PARTITION>>:cloudformation:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:stack/<<RESOURCE_NAMING_PREFIX>>*",
+                "arn:<<AWS_PARTITION>>:cloudformation:<<AWS_REGION>>:aws:transform/*"
+            ]
+        },
+        {
+            "Sid": "MultipleServicesActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AllocateAddress",
+                "ec2:AssociateAddress",
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteSecurityGroup",
+                "ec2:DescribeAddresses",
+                "ec2:DescribeInstanceAttribute",
+                "ec2:DescribeInstanceCreditSpecifications",
+                "ec2:DescribeInstances",
+                "ec2:DescribeKeyPairs",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DescribeSecurityGroupRules",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeVolumes",
+                "ec2:DescribeVpcs",
+                "ec2:DisassociateAddress",
+                "ec2:ReleaseAddress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:RunInstances",
+                "ec2:TerminateInstances",
+                "logs:DescribeLogGroups",
+                "logs:ListTagsForResource",
+                "ssm:ListAssociations",
+                "ssm:ListTagsForResource"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "EventsActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "events:DeleteRule",
+                "events:DescribeRule",
+                "events:ListTargetsByRule",
+                "events:PutRule",
+                "events:PutTargets",
+                "events:RemoveTargets"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:events:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:rule/<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "IamActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "iam:AttachRolePolicy",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:DeleteRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:GetRole",
+                "iam:GetRolePolicy",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:PassRole",
+                "iam:PutRolePolicy",
+                "iam:TagRole"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:iam::<<AWS_ACCOUNT_ID>>:role/MW/<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "IamActionsFromCloudFormation2",
+            "Effect": "Allow",
+            "Action": [
+                "iam:AddRoleToInstanceProfile",
+                "iam:CreateInstanceProfile",
+                "iam:DeleteInstanceProfile",
+                "iam:GetInstanceProfile",
+                "iam:RemoveRoleFromInstanceProfile"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:iam::<<AWS_ACCOUNT_ID>>:instance-profile/MW/<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "LambdaActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "lambda:AddPermission",
+                "lambda:CreateFunction",
+                "lambda:DeleteFunction",
+                "lambda:GetFunction",
+                "lambda:GetFunctionCodeSigningConfig",
+                "lambda:GetFunctionRecursionConfig",
+                "lambda:GetPolicy",
+                "lambda:GetRuntimeManagementConfig",
+                "lambda:InvokeFunction",
+                "lambda:RemovePermission",
+                "lambda:TagResource"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:lambda:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:function:<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "LogsActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:DeleteLogGroup"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "LogsActionsFromCloudFormation2",
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:DeleteLogGroup",
+                "logs:PutRetentionPolicy"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:/aws/lambda/<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "SsmActionsFromCloudFormation",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:AddTagsToResource",
+                "ssm:CreateDocument",
+                "ssm:DeleteDocument",
+                "ssm:DescribeDocument",
+                "ssm:GetDocument"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:ssm:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:document/<<RESOURCE_NAMING_PREFIX>>*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:CalledViaFirst": [
+                        "cloudformation.<<AWS_URL_SUFFIX>>"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "EC2StopStart",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:StartInstances",
+                "ec2:StopInstances"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:ec2:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/mw-ProductID": "MathWorks-MATLAB-Linux"
+                },
+                "StringLike": {
+                    "aws:ResourceTag/mw-StackName": "<<RESOURCE_NAMING_PREFIX>>*"
+                }
+            }
+        },
+        {
+            "Sid": "ReadOnlyActionsForSmoothConsoleExperience",
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:GetTemplateSummary",
+                "cloudformation:ListStacks",
+                "ec2:DescribeInstances",
+                "ec2:DescribeKeyPairs",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeVpcs",
+                "logs:DescribeLogGroups",
+                "ssm:DescribeInstanceInformation",
+                "ssm:GetConnectionStatus"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "EC2KeyPairWriteAccess",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:CreateKeyPair",
+                "ec2:DeleteKeyPair"
+            ],
+            "Resource": "arn:<<AWS_PARTITION>>:ec2:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:key-pair/<<RESOURCE_NAMING_PREFIX>>*"
+        },
+        {
+            "Sid": "CloudWatchLogsReadOnlyAccess",
+            "Effect": "Allow",
+            "Action": [
+                "logs:DescribeLogStreams",
+                "logs:GetLogEvents"
+            ],
+            "Resource": [
+                "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:/aws/lambda/<<RESOURCE_NAMING_PREFIX>>*",
+                "arn:<<AWS_PARTITION>>:logs:<<AWS_REGION>>:<<AWS_ACCOUNT_ID>>:log-group:<<RESOURCE_NAMING_PREFIX>>*"
+            ]
+        }
+    ]
+}
+</file>
+
+<file path="/home/epatel/code/matlab-aws-refarch/src/internal/permissions/test/parameter_overrides.json">
+{
+    "AutoShutdown": "After 3 hours",
+    "EnableCloudWatch": "Yes",
+    "EnableMATLABProxy": "Yes",
+    "UseElasticIpAddress": "Yes"
+}
+</file>
