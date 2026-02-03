@@ -43,7 +43,7 @@ jobs:
 
   release-artifacts:
     name: Create Aggregate GH Release
-    needs: create-artifacts
+    needs: [prepare-versions, create-artifacts]
     uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-gh-release.yml@main
     with:
       target_versions: ${{ needs.prepare-versions.outputs.matrix }}
