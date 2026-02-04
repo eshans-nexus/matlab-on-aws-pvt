@@ -36,7 +36,7 @@ jobs:
       matlab_version: ${{ matrix.version }}
       flavor: 'matlab-linux'
       packer_dir: './packer/v1'
-      template_file_path: 'src/metatemplate.json'
+      metatemplate_file_path: 'src/metatemplate.json'
       is_supplementary_build: true
       skip_build: true # chnage this to enable builds
     secrets: inherit
