@@ -47,9 +47,7 @@ jobs:
     uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-gh-release.yml@main
     with:
       target_versions: ${{ needs.prepare-versions.outputs.matrix }}
-      files_pattern: "*" 
       s3_bucket_url: "https://s3.amazonaws.com/test-bucket"
       dual_repo_url: "https://github.com/mathworks-ref-arch/matlab-on-aws-win"
-      generate_attestations: true
       is_supplementary_build: true
     secrets: inherit
