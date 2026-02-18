@@ -38,6 +38,7 @@ jobs:
       packer_dir: './packer/v1'
       metatemplate_file_path: 'src/metatemplate.json'
       is_supplementary_build: true
+      run_security_scan: true
       skip_build: true # chnage this to enable builds
     secrets: inherit
 
