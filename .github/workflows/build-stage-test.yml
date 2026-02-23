@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   prepare-versions:
-    uses: eshans-nexus/actions-templates/.github/workflows/module-gh-get-versions.yml@main
+    uses: eshans-nexus/actions-templates/.github/workflows/module-gh-get-versions.yml@nvesangi/smoke-test
     with:
       input_versions: ${{ inputs.matlab_versions }}
       search_dir: './releases'
@@ -31,7 +31,7 @@ jobs:
         max-parallel: 5
         matrix:
           version: ${{ fromJson(needs.prepare-versions.outputs.matrix) }}
-    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws-single.yml@main
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-aws-single.yml@nvesangi/smoke-test
     with:
       matlab_version: ${{ matrix.version }}
       flavor: 'matlab-linux'
@@ -45,7 +45,7 @@ jobs:
   release-artifacts:
     name: Create Aggregate GH Release
     needs: [prepare-versions, create-artifacts]
-    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-gh-release.yml@main
+    uses: eshans-nexus/actions-templates/.github/workflows/orchestrator-gh-release.yml@nvesangi/smoke-test
     with:
       target_versions: ${{ needs.prepare-versions.outputs.matrix }}
       s3_bucket_url: "https://s3.amazonaws.com/test-bucket"
